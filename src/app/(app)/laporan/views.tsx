@@ -31,12 +31,25 @@ function EditedNote({ r, className }: { r: ReportRow; className?: string }) {
   );
 }
 
-export function AdminReports({ reports, total, page }: { reports: ReportRow[]; total: number; page: number }) {
+export function AdminReports({
+  reports,
+  total,
+  page,
+  meId,
+  canEditAll,
+}: {
+  reports: ReportRow[];
+  total: number;
+  page: number;
+  meId: string;
+  /** akses Laporan (Kelola); tanpa itu hanya laporan unggahan sendiri yang bisa diedit */
+  canEditAll: boolean;
+}) {
   const [editing, setEditing] = useState<ReportRow | null>(null);
   return (
     <div className="space-y-4">
       <Toolbar>
-        <ServerSearch placeholder="Cari siswa, tentor, program, atau periode..." />
+        <ServerSearch placeholder="Cari siswa, tentor, periode…" />
       </Toolbar>
       {!reports.length ? (
         <EmptyState title="Tidak ada laporan" desc="Belum ada laporan masuk, atau tidak cocok dengan pencarian." />
@@ -62,9 +75,11 @@ export function AdminReports({ reports, total, page }: { reports: ReportRow[]; t
                 <div className="flex flex-wrap gap-1.5">
                   <FileLinks fileId={r.file_id} />
                   <ShareWaButton fileUrl={fileHref(r.file_id)} fileName={r.file_name || "laporan.pdf"} phone={r.students?.ortu_wa ?? null} text={shareText(r)} label="WA" />
-                  <Button size="sm" variant="ghost" onClick={() => setEditing(r)}>
-                    <Pencil /> Edit
-                  </Button>
+                  {(canEditAll || r.tutor_id === meId) && (
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(r)}>
+                      <Pencil /> Edit
+                    </Button>
+                  )}
                 </div>
               </Td>
             </tr>
@@ -89,7 +104,7 @@ export function TutorReports({ assignments, reports }: { assignments: Assignment
   return (
     <div className="space-y-4">
       <Toolbar>
-        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari nama siswa atau program..." />
+        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari siswa, program…" />
       </Toolbar>
       {list.total === 0 && <EmptyState title="Tidak ditemukan" desc="Coba kata kunci lain." />}
       <div className="space-y-3">
@@ -219,7 +234,12 @@ function ReportDialog({ mode, onClose }: { mode: DialogMode; onClose: () => void
           "Ketuk untuk memilih file PDF (maks 10 MB)"
         )}
       </button>
-      {isEdit && <p className="text-xs text-muted-foreground">Perubahan dicatat dengan nama Anda dan waktunya. File lama tetap tersimpan di arsip.</p>}
+      {isEdit && file && (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          File lama ({mode.report.file_name}) akan dihapus permanen dan diganti file baru saat disimpan.
+        </p>
+      )}
+      {isEdit && <p className="text-xs text-muted-foreground">Perubahan dicatat dengan nama Anda dan waktunya.</p>}
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onClose}>
           Batal

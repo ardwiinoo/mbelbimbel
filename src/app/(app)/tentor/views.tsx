@@ -20,26 +20,26 @@ export type ProgramRow = {
   id: string; nama: string; kategori: "privat" | "kelompok" | "abk"; jenjang: string; tarif_per_pertemuan: number; aktif: boolean;
 };
 
-export function TutorsTable({ tutors, isSuper }: { tutors: TutorRow[]; isSuper: boolean }) {
+export function TutorsTable({ tutors, canEdit, canManageAccounts }: { tutors: TutorRow[]; canEdit: boolean; canManageAccounts: boolean }) {
   const [editing, setEditing] = useState<TutorRow | null>(null);
   const list = useClientList(tutors, (t) => `${t.nama} ${t.spesialisasi ?? ""} ${t.no_wa ?? ""} ${t.email ?? ""}`);
-  const action = isSuper ? (
-    <Link href="/pengguna" className={buttonVariants({ size: "sm" })}>
+  const action = canManageAccounts ? (
+    <Link href="/pengguna" className={buttonVariants()}>
       <ShieldCheck /> Buat / kelola akun tentor
     </Link>
   ) : (
-    <p className="text-xs text-muted-foreground">Akun tentor baru, status, & reset password dikelola Super Admin.</p>
+    <p className="text-xs text-muted-foreground">Akun tentor baru & akses dikelola di menu Pengguna & Akses.</p>
   );
   return (
     <section className="space-y-4">
       <SectionHeader title="A. Data Tentor" actions={action} />
       <Toolbar>
-        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari nama, mapel, WA, atau email tentor..." />
+        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari nama, mapel, WA…" />
       </Toolbar>
       {list.total === 0 ? (
         <EmptyState title={tutors.length ? "Tidak ditemukan" : "Belum ada tentor"} />
       ) : (
-        <DataTable head={["Nama Tentor", "Spesialisasi / Mapel", "No. WhatsApp", "Akun Login", "Status", ""]}>
+        <DataTable head={["Nama Tentor", "Spesialisasi / Mapel", "No. WhatsApp", "Akun Login", "Status", ...(canEdit ? [""] : [])]}>
           {list.rows.map((t) => (
             <tr key={t.id}>
               <Td className="font-medium">{t.nama}</Td>
@@ -53,7 +53,7 @@ export function TutorsTable({ tutors, isSuper }: { tutors: TutorRow[]; isSuper: 
               </Td>
               <Td className="text-muted-foreground">{t.email}</Td>
               <Td><Pill color={t.status === "aktif" ? "green" : "gray"}>{t.status === "aktif" ? "Aktif" : "Nonaktif"}</Pill></Td>
-              <Td><Button size="sm" variant="outline" onClick={() => setEditing(t)}><Pencil /> Edit</Button></Td>
+              {canEdit && <Td><Button size="sm" variant="outline" onClick={() => setEditing(t)}><Pencil /> Edit</Button></Td>}
             </tr>
           ))}
         </DataTable>
@@ -92,19 +92,19 @@ function TutorDialog({ tutor, onClose }: { tutor: TutorRow; onClose: () => void 
   );
 }
 
-export function ProgramsTable({ programs }: { programs: ProgramRow[] }) {
+export function ProgramsTable({ programs, canEdit }: { programs: ProgramRow[]; canEdit: boolean }) {
   const [editing, setEditing] = useState<ProgramRow | "new" | null>(null);
   const list = useClientList(programs, (p) => `${p.nama} ${p.kategori} ${p.jenjang}`);
   return (
     <section className="space-y-4">
-      <SectionHeader title="B. Master Program & Tarif" actions={<Button onClick={() => setEditing("new")}><Plus /> Tambah Program</Button>} />
+      <SectionHeader title="B. Master Program & Tarif" actions={canEdit ? <Button onClick={() => setEditing("new")}><Plus /> Tambah Program</Button> : undefined} />
       <Toolbar>
-        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari program, kategori, atau jenjang..." />
+        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari program, jenjang…" />
       </Toolbar>
       {list.total === 0 ? (
         <EmptyState title={programs.length ? "Tidak ditemukan" : "Belum ada program"} />
       ) : (
-        <DataTable head={["Nama Program", "Kategori", "Jenjang", "Tarif per Pertemuan", "Status", ""]}>
+        <DataTable head={["Nama Program", "Kategori", "Jenjang", "Tarif per Pertemuan", "Status", ...(canEdit ? [""] : [])]}>
           {list.rows.map((p) => (
             <tr key={p.id}>
               <Td className="font-medium">{p.nama}</Td>
@@ -112,7 +112,7 @@ export function ProgramsTable({ programs }: { programs: ProgramRow[] }) {
               <Td>{p.jenjang}</Td>
               <Td className="font-medium tabular-nums">{rupiah(p.tarif_per_pertemuan)}</Td>
               <Td><Pill color={p.aktif ? "green" : "gray"}>{p.aktif ? "Aktif" : "Nonaktif"}</Pill></Td>
-              <Td><Button size="sm" variant="outline" onClick={() => setEditing(p)}><Pencil /> Edit</Button></Td>
+              {canEdit && <Td><Button size="sm" variant="outline" onClick={() => setEditing(p)}><Pencil /> Edit</Button></Td>}
             </tr>
           ))}
         </DataTable>

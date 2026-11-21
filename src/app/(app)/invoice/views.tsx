@@ -20,7 +20,16 @@ export type { InvoiceRow, ReadySession };
 
 const pdfUrl = (id: string, download = false) => `/api/invoices/${id}/pdf${download ? "?download=1" : ""}`;
 
-export function ReadyToBill({ sessions, programs }: { sessions: ReadySession[]; programs: { id: string; nama: string; tarif_per_pertemuan: number }[] }) {
+export function ReadyToBill({
+  sessions,
+  programs,
+  canWrite,
+}: {
+  sessions: ReadySession[];
+  programs: { id: string; nama: string; tarif_per_pertemuan: number }[];
+  /** akses Invoice (Kelola): boleh menerbitkan */
+  canWrite: boolean;
+}) {
   const months = useMemo(() => [...new Set(sessions.map((s) => bulanWib(s.mulai_at)))].sort().reverse(), [sessions]);
   const [month, setMonth] = useState<string>("");
   const [selected, setSelected] = useState<Set<string>>(() => new Set(sessions.map((s) => s.id)));
@@ -80,12 +89,14 @@ export function ReadyToBill({ sessions, programs }: { sessions: ReadySession[]; 
     <section className="space-y-4">
       <SectionHeader title="A. Daftar Siap Tagih" desc="Klik nama siswa untuk melihat & mencentang sesi. Sesi yang tidak dicentang tetap Belum Rekap." />
       <Toolbar>
-        <SearchBox value={q} onChange={setQ} placeholder="Cari siswa atau program..." />
+        <SearchBox value={q} onChange={setQ} placeholder="Cari siswa, program…" />
         <AppSelect className="sm:w-44" value={month} onChange={setMonth} aria-label="Bulan"
           options={[{ value: "", label: "Semua bulan" }, ...months.map((m) => ({ value: m, label: namaBulan(m) }))]} />
-        <Button variant="outline" onClick={selectAllMonth} disabled={!visible.length}>
-          <CheckCircle2 /> Pilih semua {month ? "bulan ini" : ""}
-        </Button>
+        {canWrite && (
+          <Button variant="outline" onClick={selectAllMonth} disabled={!visible.length}>
+            <CheckCircle2 /> Pilih semua {month ? "bulan ini" : ""}
+          </Button>
+        )}
       </Toolbar>
 
       {groups.length === 0 ? (
@@ -110,9 +121,13 @@ export function ReadyToBill({ sessions, programs }: { sessions: ReadySession[]; 
                   <Td>{chosen.length} <span className="text-muted-foreground">dari {list.length}</span> Pertemuan</Td>
                   <Td className="font-medium tabular-nums">{rupiah(chosen.length * tarif)}</Td>
                   <Td>
-                    <Button size="sm" disabled={pending || !chosen.length} onClick={() => terbitkan(key, list)}>
-                      <FilePlus2 /> {busyKey === key ? "Menerbitkan..." : "Terbitkan"}
-                    </Button>
+                    {canWrite ? (
+                      <Button size="sm" disabled={pending || !chosen.length} onClick={() => terbitkan(key, list)}>
+                        <FilePlus2 /> {busyKey === key ? "Menerbitkan..." : "Terbitkan"}
+                      </Button>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">Butuh akses Kelola</span>
+                    )}
                   </Td>
                 </tr>
                 {isOpen && (
@@ -191,12 +206,15 @@ export function InvoiceHistory({
   summary,
   page,
   status,
+  canWrite,
 }: {
   invoices: InvoiceRow[];
   total: number;
   summary: InvoiceSummary;
   page: number;
   status: string;
+  /** akses Invoice (Kelola): boleh menandai lunas */
+  canWrite: boolean;
 }) {
   const [paying, setPaying] = useState<InvoiceRow | null>(null);
   const { set, pending } = useQueryNav();
@@ -219,7 +237,7 @@ export function InvoiceHistory({
         }
       />
       <Toolbar>
-        <ServerSearch placeholder="Cari no. invoice, siswa, atau program..." />
+        <ServerSearch placeholder="Cari invoice, siswa, program…" />
         <div className="flex gap-1 rounded-lg bg-muted p-1">
           {tabs.map((t) => (
             <button
@@ -242,7 +260,10 @@ export function InvoiceHistory({
         <DataTable head={["No. Invoice", "Tgl Terbit", "Siswa & Kelas", "Rincian", "Total", "Status Bayar", "File Nota"]}>
           {invoices.map((inv) => (
             <tr key={inv.id}>
-              <Td className="font-medium whitespace-nowrap">{inv.nomor}</Td>
+              <Td className="whitespace-nowrap">
+                <p className="font-medium">{inv.nomor}</p>
+                {inv.created_by && <p className="text-[11px] text-muted-foreground">oleh {inv.created_by}</p>}
+              </Td>
               <Td className="whitespace-nowrap">{tanggal(inv.tgl_terbit, false)}</Td>
               <Td><b>{inv.students?.nama}</b> ({inv.students?.kelas?.replace("Kelas ", "")})</Td>
               <Td>{inv.jumlah_sesi}x {inv.programs?.nama}</Td>
@@ -252,16 +273,21 @@ export function InvoiceHistory({
                   <div className="space-y-1">
                     <Pill color="green">Lunas</Pill>
                     {inv.tgl_bayar && <p className="text-[11px] text-muted-foreground">{tanggal(inv.tgl_bayar, false)}</p>}
-                    <button className="block text-[11px] text-muted-foreground underline hover:text-foreground" onClick={() => setPaying(inv)}>
-                      ubah
-                    </button>
+                    {inv.updated_by && <p className="text-[11px] text-muted-foreground">dicatat oleh {inv.updated_by}</p>}
+                    {canWrite && (
+                      <button className="block text-[11px] text-muted-foreground underline hover:text-foreground" onClick={() => setPaying(inv)}>
+                        ubah
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="flex flex-col items-start gap-1.5">
                     <Pill color="red">Belum Lunas</Pill>
-                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setPaying(inv)}>
-                      <BadgeCheck /> Tandai Lunas
-                    </Button>
+                    {canWrite && (
+                      <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setPaying(inv)}>
+                        <BadgeCheck /> Tandai Lunas
+                      </Button>
+                    )}
                   </div>
                 )}
               </Td>

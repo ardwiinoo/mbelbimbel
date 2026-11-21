@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   },
   serverExternalPackages: ["@react-pdf/renderer"],
   // Badge dev Next.js default di kiri bawah menutupi bottom-nav mobile
-  devIndicators: { position: "top-right" },
+  devIndicators: false,
   turbopack: {
     rules: {
       "*.css": {

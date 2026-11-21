@@ -14,7 +14,7 @@ type S = {
   link_drive_konten: string | null; absen_buka_menit: number; absen_tutup_menit: number;
 };
 
-export function SettingsForm({ s }: { s: S }) {
+export function SettingsForm({ s, readOnly }: { s: S; readOnly: boolean }) {
   const [pending, start] = useTransition();
   const { register, handleSubmit } = useForm({
     defaultValues: {
@@ -30,6 +30,8 @@ export function SettingsForm({ s }: { s: S }) {
         if (r.ok) toast.success(r.message); else toast.error(r.error);
       }))}
     >
+      {/* Akses Lihat saja → semua isian nonaktif */}
+      <fieldset disabled={readOnly} className="contents">
       <Card>
         <CardHeader><CardTitle>Identitas & Nota</CardTitle></CardHeader>
         <CardContent className="grid gap-3">
@@ -55,7 +57,12 @@ export function SettingsForm({ s }: { s: S }) {
           <p className="text-xs text-muted-foreground sm:col-span-2">Dicek di server saat absen. Di luar jendela, admin bisa mengabsenkan manual dari menu Jadwal.</p>
         </CardContent>
       </Card>
-      <div><Button type="submit" disabled={pending}>{pending ? "Menyimpan..." : "Simpan Pengaturan"}</Button></div>
+      </fieldset>
+      {readOnly ? (
+        <p className="text-sm text-muted-foreground">Anda hanya punya akses Lihat untuk Pengaturan.</p>
+      ) : (
+        <div><Button type="submit" disabled={pending}>{pending ? "Menyimpan..." : "Simpan Pengaturan"}</Button></div>
+      )}
     </form>
   );
 }

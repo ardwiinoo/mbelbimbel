@@ -6,8 +6,8 @@ import {
   Home, Users, Briefcase, CalendarCheck, FileText, BookOpen, Receipt, Settings, ShieldCheck, MoreHorizontal, LogOut, GraduationCap, UserCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { NAV } from "./nav-config";
-import { isAdminRole, isSuperAdmin, ROLE_LABEL, type Role } from "@/lib/roles";
+import { MOBILE_PRIORITY, NAV } from "./nav-config";
+import { accountLabel, type AccessSubject } from "@/lib/access";
 import { signOut } from "@/app/login/actions";
 import { InstallNavButton } from "./install-app";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -19,12 +19,13 @@ const ICONS = {
 
 const SHORT: Record<string, string> = { "/materi": "Materi", "/tentor": "Tentor" };
 
-type Props = { role: Role; nama: string; namaBimbel: string };
+type Props = { access: AccessSubject; nama: string; namaBimbel: string };
 
-function useItems(role: Props["role"]) {
-  return NAV.filter((n) => (!n.adminOnly || isAdminRole(role)) && (!n.superOnly || isSuperAdmin(role))).map((n) => ({
+/** Menu yang boleh dilihat akun ini (berdasarkan akses per modul, bukan peran). */
+function useItems(access: AccessSubject) {
+  return NAV.filter((n) => n.visible(access)).map((n) => ({
     ...n,
-    label: role === "tentor" && n.tentorLabel ? n.tentorLabel : n.label,
+    label: n.ownLabel && n.ownWhen?.(access) ? n.ownLabel : n.label,
     Icon: ICONS[n.icon as keyof typeof ICONS],
   }));
 }
@@ -33,9 +34,9 @@ function isActive(path: string, href: string) {
   return href === "/" ? path === "/" : path.startsWith(href);
 }
 
-export function Sidebar({ role, nama, namaBimbel }: Props) {
+export function Sidebar({ access, nama, namaBimbel }: Props) {
   const path = usePathname();
-  const items = useItems(role);
+  const items = useItems(access);
   return (
     <aside className="glass sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r md:flex">
       <div className="flex items-center gap-2 px-4 py-5">
@@ -44,7 +45,7 @@ export function Sidebar({ role, nama, namaBimbel }: Props) {
         </div>
         <div className="min-w-0">
           <p className="truncate text-sm font-bold">{namaBimbel}</p>
-          <p className="text-xs text-muted-foreground">{ROLE_LABEL[role]}</p>
+          <p className="text-xs text-muted-foreground">{accountLabel(access)}</p>
         </div>
       </div>
       <nav className="flex-1 space-y-0.5 px-2">
@@ -84,19 +85,20 @@ export function Sidebar({ role, nama, namaBimbel }: Props) {
   );
 }
 
-export function BottomNav({ role, nama }: Props) {
+export function BottomNav({ access, nama }: Props) {
   const path = usePathname();
-  const items = useItems(role);
+  const items = useItems(access);
   const [open, setOpen] = useState(false);
-  const primary = isAdminRole(role)
-    ? items.filter((i) => ["/", "/siswa", "/jadwal", "/invoice"].includes(i.href))
-    : items.filter((i) => ["/jadwal", "/siswa", "/laporan", "/materi"].includes(i.href));
+  // 4 menu terpenting yang boleh diakses tampil di bawah; sisanya di "Lainnya"
+  const primary = MOBILE_PRIORITY.map((h) => items.find((i) => i.href === h))
+    .filter((i): i is (typeof items)[number] => !!i)
+    .slice(0, 4);
   const rest = items.filter((i) => !primary.includes(i));
 
   return (
     <>
       <nav className="glass pb-safe fixed inset-x-0 bottom-0 z-40 border-t md:hidden">
-        <div className="grid grid-cols-5">
+        <div className="grid" style={{ gridTemplateColumns: `repeat(${primary.length + 1}, minmax(0, 1fr))` }}>
           {primary.map(({ href, label, Icon }) => (
             <Link
               key={href}
@@ -153,5 +155,39 @@ export function BottomNav({ role, nama }: Props) {
         </SheetContent>
       </Sheet>
     </>
+  );
+}
+
+/** Top bar HP: kaca, lengket di atas, supaya bagian atas halaman tetap jelas terbaca. */
+export function MobileTopBar({ access, nama, namaBimbel }: Props) {
+  const path = usePathname();
+  const initials = nama
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase())
+    .join("");
+  return (
+    <header className="glass sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b px-4 pt-[env(safe-area-inset-top)] md:hidden">
+      <Link href="/" className="flex min-w-0 items-center gap-2.5">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <GraduationCap className="size-4.5" />
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate text-sm leading-tight font-bold">{namaBimbel}</span>
+          <span className="block truncate text-[11px] leading-tight text-muted-foreground">{accountLabel(access)}</span>
+        </span>
+      </Link>
+      <Link
+        href="/profil"
+        aria-label="Profil saya"
+        className={cn(
+          "flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary ring-1 ring-primary/15",
+          path.startsWith("/profil") && "bg-primary text-primary-foreground",
+        )}
+      >
+        {initials || <UserCircle className="size-5" />}
+      </Link>
+    </header>
   );
 }

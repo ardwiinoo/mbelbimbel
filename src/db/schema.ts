@@ -16,10 +16,13 @@ import {
   uniqueIndex,
   unique,
   uuid,
+  primaryKey,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 // ---------- ENUM ----------
-export const userRole = pgEnum("user_role", ["super_admin", "admin", "tentor"]);
+/** Level akses per modul: read = Lihat, write = Kelola (termasuk Lihat). */
+export const permissionLevel = pgEnum("permission_level", ["read", "write"]);
 export const activeStatus = pgEnum("active_status", ["aktif", "nonaktif"]);
 export const programKategori = pgEnum("program_kategori", ["privat", "kelompok", "abk"]);
 export const statusKehadiran = pgEnum("status_kehadiran", ["terjadwal", "hadir", "tidak_hadir", "batal"]);
@@ -29,6 +32,9 @@ export const fileKind = pgEnum("file_kind", ["assessment", "attendance", "report
 
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 const createdAt = () => ts("created_at").notNull().defaultNow();
+/** Kolom jejak "oleh siapa" (null untuk data lama sebelum fitur ini / akun yang dihapus). */
+const byUser = (name: string) => uuid(name).references((): AnyPgColumn => users.id, { onDelete: "set null" });
+const updatedAtOpt = () => ts("updated_at");
 
 // ---------- AKUN & SESI ----------
 export const users = pgTable(
@@ -39,13 +45,29 @@ export const users = pgTable(
     passwordHash: text("password_hash").notNull(),
     nama: text("nama").notNull(),
     noWa: text("no_wa"),
-    role: userRole("role").notNull().default("tentor"),
+    /** Mengajar: bisa di-assign ke siswa/jadwal, absen foto, lihat data miliknya. */
+    isTutor: boolean("is_tutor").notNull().default(false),
+    /** Super Admin: semua akses + kelola semua akun. Tersembunyi dari pengelola akun lain. */
+    isSuperuser: boolean("is_superuser").notNull().default(false),
     spesialisasi: text("spesialisasi"),
     status: activeStatus("status").notNull().default("aktif"),
     createdAt: createdAt(),
+    createdBy: byUser("created_by"),
     updatedAt: ts("updated_at").notNull().defaultNow(),
+    updatedBy: byUser("updated_by"),
   },
   (t) => [uniqueIndex("users_email_lower_idx").on(sql`lower(${t.email})`)],
+);
+
+/** Akses per modul per akun. Modul divalidasi di kode (src/lib/access.ts). Tanpa baris = tanpa akses. */
+export const userPermissions = pgTable(
+  "user_permissions",
+  {
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    module: text("module").notNull(),
+    level: permissionLevel("level").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.module] })],
 );
 
 /** Token sesi disimpan sebagai hash SHA-256; token asli hanya ada di cookie. */
@@ -74,6 +96,7 @@ export const appSettings = pgTable(
     absenBukaMenit: integer("absen_buka_menit").notNull().default(30),
     absenTutupMenit: integer("absen_tutup_menit").notNull().default(60),
     updatedAt: ts("updated_at").notNull().defaultNow(),
+    updatedBy: byUser("updated_by"),
   },
   (t) => [check("app_settings_singleton", sql`${t.id} = 1`)],
 );
@@ -104,6 +127,9 @@ export const programs = pgTable(
     tarifPerPertemuan: integer("tarif_per_pertemuan").notNull(),
     aktif: boolean("aktif").notNull().default(true),
     createdAt: createdAt(),
+    createdBy: byUser("created_by"),
+    updatedAt: updatedAtOpt(),
+    updatedBy: byUser("updated_by"),
   },
   (t) => [check("programs_tarif_nonneg", sql`${t.tarifPerPertemuan} >= 0`)],
 );
@@ -119,7 +145,11 @@ export const students = pgTable("students", {
   ortuWa: text("ortu_wa"),
   status: activeStatus("status").notNull().default("aktif"),
   deletedAt: ts("deleted_at"),
+  deletedBy: byUser("deleted_by"),
   createdAt: createdAt(),
+  createdBy: byUser("created_by"),
+  updatedAt: updatedAtOpt(),
+  updatedBy: byUser("updated_by"),
 });
 
 export const studentPrograms = pgTable(
@@ -130,6 +160,9 @@ export const studentPrograms = pgTable(
     programId: uuid("program_id").notNull().references(() => programs.id),
     tutorId: uuid("tutor_id").references(() => users.id),
     createdAt: createdAt(),
+    createdBy: byUser("created_by"),
+    updatedAt: updatedAtOpt(),
+    updatedBy: byUser("updated_by"),
   },
   (t) => [unique("student_programs_student_program_uq").on(t.studentId, t.programId), index("student_programs_tutor_idx").on(t.tutorId)],
 );
@@ -155,6 +188,8 @@ export const invoices = pgTable("invoices", {
   tglBayar: date("tgl_bayar", { mode: "string" }),
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: createdAt(),
+  updatedAt: updatedAtOpt(),
+  updatedBy: byUser("updated_by"),
 });
 
 export const invoiceCounters = pgTable("invoice_counters", {
@@ -182,6 +217,9 @@ export const sessions = pgTable(
     catatanAdmin: text("catatan_admin"),
     invoiceId: uuid("invoice_id").references(() => invoices.id),
     createdAt: createdAt(),
+    createdBy: byUser("created_by"),
+    updatedAt: updatedAtOpt(),
+    updatedBy: byUser("updated_by"),
   },
   (t) => [
     check("sessions_time_order", sql`${t.selesaiAt} > ${t.mulaiAt}`),
@@ -213,10 +251,11 @@ export const progressReports = pgTable(
     periode: text("periode"),
     catatan: text("catatan"),
     uploadedAt: ts("uploaded_at").notNull().defaultNow(),
-    /** Diisi saat laporan diedit (ganti file/periode). File lama tetap disimpan. */
+    /** Diisi saat laporan diedit (ganti file/periode). */
     updatedAt: ts("updated_at"),
     updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
     deletedAt: ts("deleted_at"),
+    deletedBy: byUser("deleted_by"),
   },
   (t) => [index("progress_reports_tutor_idx").on(t.tutorId)],
 );
@@ -229,7 +268,9 @@ export const materials = pgTable("materials", {
   fileId: uuid("file_id").notNull().references(() => files.id),
   uploadedBy: uuid("uploaded_by").references(() => users.id),
   updatedAt: ts("updated_at").notNull().defaultNow(),
+  updatedBy: byUser("updated_by"),
   deletedAt: ts("deleted_at"),
+  deletedBy: byUser("deleted_by"),
   createdAt: createdAt(),
 });
 
@@ -243,7 +284,12 @@ export const auditLog = pgTable("audit_log", {
 });
 
 // ---------- RELASI (untuk db.query.*) ----------
+export const userPermissionsRelations = relations(userPermissions, ({ one }) => ({
+  user: one(users, { fields: [userPermissions.userId], references: [users.id] }),
+}));
+
 export const usersRelations = relations(users, ({ many }) => ({
+  permissions: many(userPermissions),
   sessions: many(sessions),
   assignments: many(studentPrograms),
 }));

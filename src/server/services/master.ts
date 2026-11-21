@@ -2,11 +2,11 @@ import { and, asc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { appSettings, programs, studentPrograms, students, users } from "@/db/schema";
-import { assertAdmin, UserError, type Actor } from "../authz";
+import { assertAny, assertCan, UserError, type Actor } from "../authz";
 
 // ---------- opsi dropdown (admin) ----------
 export async function programOptions(actor: Actor) {
-  assertAdmin(actor);
+  assertAny(actor, [["siswa", "read"], ["jadwal", "read"], ["tentor", "read"]]); // nama program/tentor untuk filter & form
   return db()
     .select({ id: programs.id, nama: programs.nama, kategori: programs.kategori })
     .from(programs)
@@ -15,17 +15,17 @@ export async function programOptions(actor: Actor) {
 }
 
 export async function tutorOptions(actor: Actor) {
-  assertAdmin(actor);
+  assertAny(actor, [["siswa", "read"], ["jadwal", "read"], ["tentor", "read"]]); // nama program/tentor untuk filter & form
   return db()
     .select({ id: users.id, nama: users.nama })
     .from(users)
-    .where(and(eq(users.role, "tentor"), eq(users.status, "aktif")))
+    .where(and(eq(users.isTutor, true), eq(users.status, "aktif")))
     .orderBy(asc(users.nama));
 }
 
 /** Pasangan siswa+program aktif untuk form jadwal. */
 export async function studentProgramOptions(actor: Actor) {
-  assertAdmin(actor);
+  assertCan(actor, "jadwal", "write");
   const rows = await db()
     .select({
       id: studentPrograms.id,
@@ -50,11 +50,11 @@ export async function studentProgramOptions(actor: Actor) {
 
 // ---------- tentor ----------
 export async function listTutors(actor: Actor) {
-  assertAdmin(actor);
+  assertCan(actor, "tentor", "read");
   const rows = await db()
     .select({ id: users.id, nama: users.nama, email: users.email, noWa: users.noWa, spesialisasi: users.spesialisasi, status: users.status })
     .from(users)
-    .where(eq(users.role, "tentor"))
+    .where(eq(users.isTutor, true))
     .orderBy(asc(users.nama));
   return rows.map((r) => ({ id: r.id, nama: r.nama, email: r.email, no_wa: r.noWa, spesialisasi: r.spesialisasi, status: r.status }));
 }
@@ -68,13 +68,13 @@ const tutorSchema = z.object({
 
 /** Admin hanya boleh mengedit data profil TENTOR (bukan peran/status — itu Super Admin). */
 export async function saveTutor(actor: Actor | null, input: z.input<typeof tutorSchema>) {
-  assertAdmin(actor);
+  assertCan(actor, "tentor", "write");
   const p = tutorSchema.safeParse(input);
   if (!p.success) throw new UserError(p.error.issues[0].message);
   const r = await db()
     .update(users)
-    .set({ nama: p.data.nama, spesialisasi: p.data.spesialisasi, noWa: p.data.no_wa, updatedAt: new Date() })
-    .where(and(eq(users.id, p.data.id), eq(users.role, "tentor")))
+    .set({ nama: p.data.nama, spesialisasi: p.data.spesialisasi, noWa: p.data.no_wa, updatedAt: new Date(), updatedBy: actor.id })
+    .where(and(eq(users.id, p.data.id), eq(users.isTutor, true), actor.isSuperuser ? undefined : eq(users.isSuperuser, false)))
     .returning({ id: users.id });
   if (!r.length) throw new UserError("Tentor tidak ditemukan");
   return "Data tentor diperbarui";
@@ -82,7 +82,7 @@ export async function saveTutor(actor: Actor | null, input: z.input<typeof tutor
 
 // ---------- program & tarif (tarif hanya untuk admin) ----------
 export async function listProgramsWithTarif(actor: Actor) {
-  assertAdmin(actor);
+  assertAny(actor, [["tentor", "read"], ["invoice", "read"]]); // halaman Invoice butuh tarif
   const rows = await db().select().from(programs).orderBy(asc(programs.nama));
   return rows.map((p) => ({
     id: p.id,
@@ -104,14 +104,14 @@ const programSchema = z.object({
 });
 
 export async function saveProgram(actor: Actor | null, input: z.input<typeof programSchema>) {
-  assertAdmin(actor);
+  assertCan(actor, "tentor", "write");
   const p = programSchema.safeParse(input);
   if (!p.success) throw new UserError(p.error.issues[0].message);
   const { id, tarif_per_pertemuan, ...rest } = p.data;
   const data = { ...rest, tarifPerPertemuan: tarif_per_pertemuan };
   try {
-    if (id) await db().update(programs).set(data).where(eq(programs.id, id));
-    else await db().insert(programs).values(data);
+    if (id) await db().update(programs).set({ ...data, updatedAt: new Date(), updatedBy: actor.id }).where(eq(programs.id, id));
+    else await db().insert(programs).values({ ...data, createdBy: actor.id });
   } catch (e) {
     if ((e as { cause?: { code?: string } }).cause?.code === "23505") throw new UserError("Nama program sudah ada");
     throw e;
@@ -135,7 +135,7 @@ const settingsSchema = z.object({
 });
 
 export async function saveSettings(actor: Actor | null, input: z.input<typeof settingsSchema>) {
-  assertAdmin(actor);
+  assertCan(actor, "pengaturan", "write");
   const p = settingsSchema.safeParse(input);
   if (!p.success) throw new UserError(p.error.issues[0].message);
   const v = p.data;
@@ -148,6 +148,7 @@ export async function saveSettings(actor: Actor | null, input: z.input<typeof se
     absenBukaMenit: v.absen_buka_menit,
     absenTutupMenit: v.absen_tutup_menit,
     updatedAt: new Date(),
+    updatedBy: actor.id,
   };
   await db().insert(appSettings).values({ id: 1, ...data }).onConflictDoUpdate({ target: appSettings.id, set: data });
   return "Pengaturan disimpan";

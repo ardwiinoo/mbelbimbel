@@ -7,7 +7,7 @@ import { and, count, eq, sql } from "drizzle-orm";
 import { closeDb, db } from "../src/db";
 import { auditLog, files, materials, sessions, studentAssessments, students, users } from "../src/db/schema";
 import { getFile, saveFile } from "../src/lib/storage";
-import type { Actor } from "../src/server/authz";
+import { loadPermissions, type Actor } from "../src/server/authz";
 import { findReadableFile } from "../src/server/files";
 import { createSession, findSessionUser } from "../src/server/session";
 import * as inv from "../src/server/services/invoices";
@@ -54,7 +54,7 @@ async function keyOf(fileId: string) {
 async function actor(email: string): Promise<Actor> {
   const [u] = await db().select().from(users).where(eq(users.email, email));
   if (!u) throw new Error(`Akun ${email} tidak ada — jalankan pnpm db:reset dulu`);
-  return { id: u.id, role: u.role, status: u.status, nama: u.nama };
+  return { id: u.id, nama: u.nama, status: u.status, isSuperuser: u.isSuperuser, isTutor: u.isTutor, perms: await loadPermissions(u.id) };
 }
 
 async function main() {
@@ -72,7 +72,7 @@ async function main() {
     check("data siswa untuk tentor tidak berisi asesmen", list.every((s) => s.student_assessments === undefined));
     check("tentor tidak bisa membaca file asesmen", (await findReadableFile(aulia, asm.fileId)) === null);
     check("admin bisa membaca file asesmen", (await findReadableFile(admin, asm.fileId)) !== null);
-    await rejects("tentor tidak bisa upload asesmen", () => stu.addAssessment(aulia, S["Alya Putri"], file(PDF, "x.pdf")), /admin/i);
+    await rejects("tentor tidak bisa upload asesmen", () => stu.addAssessment(aulia, S["Alya Putri"], file(PDF, "x.pdf")), /tidak punya akses/);
   }
 
   console.log("\nData milik sendiri saja");
@@ -88,18 +88,18 @@ async function main() {
     check("tentor hanya melihat laporannya", r.every((x) => x.profiles?.nama === "Kak Aulia"));
     const { rows: r2 } = await rep.listReports(rina);
     check("tentor lain tidak melihat laporan Aulia", r2.length === 0);
-    await rejects("tentor tidak bisa melihat daftar tentor", () => master.listTutors(aulia), /admin/i);
-    await rejects("tentor tidak bisa melihat daftar pengguna", () => usr.listUsers(aulia), /Super Admin/i);
+    await rejects("tentor tidak bisa melihat daftar tentor", () => master.listTutors(aulia), /tidak punya akses/);
+    await rejects("tentor tidak bisa melihat daftar pengguna", () => usr.listUsers(aulia), /tidak punya akses/);
   }
 
   console.log("\nTarif & invoice tertutup untuk tentor");
   {
-    await rejects("tentor tidak bisa melihat master tarif", () => master.listProgramsWithTarif(aulia), /admin/i);
+    await rejects("tentor tidak bisa melihat master tarif", () => master.listProgramsWithTarif(aulia), /tidak punya akses/);
     const list = await stu.listStudents(aulia);
     check("data program untuk tentor tanpa tarif", !JSON.stringify(list).includes("tarif"));
-    await rejects("tentor tidak bisa melihat invoice", () => inv.listInvoices(aulia), /admin/i);
-    await rejects("tentor tidak bisa menerbitkan invoice", () => inv.issueInvoice(aulia, S["Budi Utama"], S["Budi Utama"], []), /admin/i);
-    await rejects("tentor tidak bisa membuka PDF invoice", () => inv.getInvoicePdfData(aulia, S["Budi Utama"]), /admin/i);
+    await rejects("tentor tidak bisa melihat invoice", () => inv.listInvoices(aulia), /tidak punya akses/);
+    await rejects("tentor tidak bisa menerbitkan invoice", () => inv.issueInvoice(aulia, S["Budi Utama"], S["Budi Utama"], []), /tidak punya akses/);
+    await rejects("tentor tidak bisa membuka PDF invoice", () => inv.getInvoicePdfData(aulia, S["Budi Utama"]), /tidak punya akses/);
     check("admin bisa melihat tarif", (await master.listProgramsWithTarif(admin)).length === 4);
   }
 
@@ -127,7 +127,7 @@ async function main() {
     const [after] = await db().select().from(sessions).where(eq(sessions.id, now.id));
     check("tentor pemilik bisa membaca foto absennya", (await findReadableFile(aulia, after.fotoFileId!)) !== null);
     check("tentor lain tidak bisa membaca foto itu", (await findReadableFile(rina, after.fotoFileId!)) === null);
-    await rejects("tentor tidak bisa override kehadiran", () => ses.setAttendanceStatus(aulia, now.id, "terjadwal", "x"), /admin/i);
+    await rejects("tentor tidak bisa override kehadiran", () => ses.setAttendanceStatus(aulia, now.id, "terjadwal", "x"), /tidak punya akses/);
     const fotoKey = await keyOf(after.fotoFileId!);
     await ses.setAttendanceStatus(admin, now.id, "terjadwal", "reset demo");
     check("reset ke Terjadwal menghapus foto absen lama (DB + disk)", await fileGone(after.fotoFileId!, fotoKey));
@@ -173,7 +173,7 @@ async function main() {
     const asmNow = await db().select().from(studentAssessments).where(eq(studentAssessments.studentId, asm.studentId));
     check("ganti asesmen → hanya 1 dokumen aktif, file lama terhapus", asmNow.length === 1 && (await fileGone(asm.fileId, oldAsmKey)));
     asm.fileId = asmNow[0].fileId;
-    await rejects("tentor tidak bisa upload materi", () => mat.saveMaterial(aulia, { judul: "x", kategori: "x", jenjang: "x", file: file(PDF, "x.pdf") }), /admin/i);
+    await rejects("tentor tidak bisa upload materi", () => mat.saveMaterial(aulia, { judul: "x", kategori: "x", jenjang: "x", file: file(PDF, "x.pdf") }), /tidak punya akses/);
     await mat.softDeleteMaterial(admin, mat0.id);
     check("materi yang dihapus tidak bisa dibaca tentor", (await findReadableFile(aulia, mat0.fileId)) === null);
     check("…tapi tetap bisa dibaca admin", (await findReadableFile(admin, mat0.fileId)) !== null);
@@ -188,29 +188,91 @@ async function main() {
     check("file benar-benar ada di UPLOAD_DIR", existsSync(path.resolve(process.env.UPLOAD_DIR || "/app/uploads", f.storageKey)));
   }
 
-  console.log("\nSuper Admin & aturan peran");
+  console.log("\nAkses per modul, Super Admin & pengelola akun");
   {
-    const base = { nama: "x", role: "admin" as const, status: "aktif" as const };
-    await rejects("admin tidak bisa membuat akun", () => usr.createUser(admin, { ...base, email: "z@z.test", password: "12345678" }), /Super Admin/);
-    await rejects("admin tidak bisa mengubah peran", () => usr.updateUser(admin, { ...base, id: aulia.id }), /Super Admin/);
-    await rejects("admin tidak bisa reset password", () => usr.resetPassword(admin, aulia.id, "12345678"), /Super Admin/);
-    await rejects("admin tidak bisa mengedit profil non-tentor lewat edit tentor", () => master.saveTutor(admin, { id: sup.id, nama: "Hacked", spesialisasi: "Hacked spec" }), /tidak ditemukan/);
+    const tutorBase = { is_tutor: true, is_superuser: false, perms: { materi: "read" as const } };
+    // --- Admin tanpa akses "Pengguna" tidak bisa mengelola akun ---
+    await rejects("admin tanpa akses Pengguna tidak bisa membuat akun", () => usr.createUser(admin, { nama: "x", email: "z@z.test", password: "12345678", is_tutor: false, perms: {} }), /tidak punya akses/);
+    await rejects("admin tanpa akses Pengguna tidak bisa mengubah akun", () => usr.updateUser(admin, { id: aulia.id, nama: "x", status: "aktif", ...tutorBase, spesialisasi: "x" }), /tidak punya akses/);
+    await rejects("admin tanpa akses Pengguna tidak bisa reset password", () => usr.resetPassword(admin, aulia.id, "12345678"), /tidak punya akses/);
+    await rejects("admin tidak bisa mengedit Super Admin lewat edit tentor", () => master.saveTutor(admin, { id: sup.id, nama: "Hacked", spesialisasi: "Hacked spec" }), /tidak ditemukan/);
     await master.saveTutor(admin, { id: aulia.id, nama: "Kak Aulia", spesialisasi: "Calistung, SD Umum", no_wa: "0812-1111-2222" });
-    check("admin tetap bisa edit data tentor", true);
-    await rejects("Super Admin terakhir tidak bisa diturunkan", () => usr.updateUser(sup, { id: sup.id, nama: "Pak Owner", role: "admin", status: "aktif" }), /minimal satu Super Admin/);
-    await rejects("Super Admin terakhir tidak bisa dinonaktifkan", () => usr.updateUser(sup, { id: sup.id, nama: "Pak Owner", role: "super_admin", status: "nonaktif" }), /minimal satu Super Admin/);
+    check("admin (akses Tentor: Kelola) tetap bisa edit data tentor", true);
 
+    // --- Super Admin terakhir ---
+    const supIn = { nama: "Pak Owner", is_tutor: false, perms: {} };
+    await rejects("Super Admin terakhir tidak bisa diturunkan", () => usr.updateUser(sup, { id: sup.id, ...supIn, is_superuser: false, status: "aktif" }), /minimal satu Super Admin/);
+    await rejects("Super Admin terakhir tidak bisa dinonaktifkan", () => usr.updateUser(sup, { id: sup.id, ...supIn, is_superuser: true, status: "nonaktif" }), /minimal satu Super Admin/);
+
+    // --- nonaktif memutus sesi ---
     const { token } = await createSession(rina.id);
-    await usr.updateUser(sup, { id: rina.id, nama: "Kak Rina", role: "tentor", status: "nonaktif", spesialisasi: "Fisika, Matematika SMP" });
+    await usr.updateUser(sup, { id: rina.id, nama: "Kak Rina", status: "nonaktif", ...tutorBase, spesialisasi: "Fisika, Matematika SMP" });
     check("menonaktifkan akun memutus sesi loginnya", (await findSessionUser(token)) === null);
     await rejects("akun nonaktif tidak bisa login", () => usr.authenticate("rina@bimbel.test", "Demo12345!"), /nonaktif/);
     await rejects("actor nonaktif ditolak service", () => stu.listStudents({ ...rina, status: "nonaktif" }), /Sesi tidak valid/);
-    await usr.updateUser(sup, { id: rina.id, nama: "Kak Rina", role: "tentor", status: "aktif", spesialisasi: "Fisika, Matematika SMP" });
+    await usr.updateUser(sup, { id: rina.id, nama: "Kak Rina", status: "aktif", ...tutorBase, spesialisasi: "Fisika, Matematika SMP" });
+
+    // --- Delegasi: Super Admin memberi admin akses Pengguna (Kelola) ---
+    const adminPerms = { siswa: "write", asesmen: "write", tentor: "write", jadwal: "write", laporan: "write", materi: "write", invoice: "write", pengaturan: "write" } as const;
+    await usr.updateUser(sup, { id: admin.id, nama: "Admin Bimbel", status: "aktif", is_tutor: false, is_superuser: false, perms: { ...adminPerms, pengguna: "write" } });
+    const mgr = await actor("admin@bimbel.test"); // muat ulang akses
+    const seen = await usr.listUsers(mgr);
+    check("pengelola akun tidak melihat Super Admin di daftar", !seen.some((u) => u.is_superuser) && seen.length > 0);
+    await rejects("pengelola tidak bisa mengubah akun Super Admin (via ID)", () => usr.updateUser(mgr, { id: sup.id, nama: "Uji", status: "aktif", is_tutor: false, is_superuser: false, perms: {} }), /tidak ditemukan/);
+    await rejects("pengelola tidak bisa reset password Super Admin", () => usr.resetPassword(mgr, sup.id, "12345678"), /tidak ditemukan/);
+    await rejects("pengelola tidak bisa membuat Super Admin", () => usr.createUser(mgr, { nama: "Evil", email: "evil@x.test", password: "12345678", is_tutor: false, is_superuser: true, perms: {} }), /Hanya Super Admin/);
+    await rejects("pengelola tidak bisa mengubah akses akunnya sendiri", () => usr.updateUser(mgr, { id: mgr.id, nama: "Admin Bimbel", status: "aktif", is_tutor: false, is_superuser: false, perms: { ...adminPerms, pengguna: "write" } }), /akun sendiri/);
+
+    const created = await usr.createUser(mgr, { nama: "Staf Keuangan", email: "keu@bimbel.test", password: "Demo12345!", is_tutor: false, perms: { pengguna: "write", invoice: "read", siswa: "read" } });
+    const [keuRow] = await db().select().from(users).where(eq(users.id, created.id!));
+    check("akun baru mencatat created_by = pembuatnya", keuRow.createdBy === mgr.id && keuRow.updatedBy === mgr.id);
+    check("daftar akun menampilkan 'dibuat oleh'", (await usr.listUsers(mgr)).find((u) => u.id === created.id)?.created_by === "Admin Bimbel");
+
+    // --- Anti eskalasi: pengelola dengan akses terbatas ---
+    const keu = await actor("keu@bimbel.test");
+    await rejects("tidak bisa memberi akses melebihi akses sendiri", () => usr.createUser(keu, { nama: "Uji", email: "x2@x.test", password: "12345678", is_tutor: false, perms: { invoice: "write" } }), /melebihi akses Anda/);
+    await rejects("tidak bisa mengelola akun yang lebih berkuasa (ubah)", () => usr.updateUser(keu, { id: mgr.id, nama: "Uji", status: "aktif", is_tutor: false, is_superuser: false, perms: {} }), /melebihi akses Anda/);
+    await rejects("tidak bisa reset password akun yang lebih berkuasa", () => usr.resetPassword(keu, mgr.id, "12345678"), /melebihi akses Anda/);
+    const low = await usr.createUser(keu, { nama: "Magang", email: "magang@bimbel.test", password: "Demo12345!", is_tutor: false, perms: { invoice: "read" } });
+    check("boleh membuat akun dengan akses ≤ aksesnya", !!low.id);
+    await usr.resetPassword(keu, low.id!, "PasswordMagang1");
+    check("boleh reset password akun yang setara/lebih rendah", true);
+
+    // --- Lihat vs Kelola ---
+    const magang = await actor("magang@bimbel.test");
+    check("akses Lihat Invoice: bisa melihat invoice", (await inv.listInvoices(magang)).total >= 0);
+    await rejects("akses Lihat Invoice: tidak bisa menerbitkan", () => inv.issueInvoice(magang, S["Budi Utama"], S["Budi Utama"], [S["Budi Utama"]]), /tidak punya akses/);
+    await rejects("akses Lihat Invoice: tidak bisa tandai lunas", () => inv.setPaid(magang, S["Budi Utama"], true), /tidak punya akses/);
+    await rejects("tanpa akses Siswa & bukan tentor: data siswa ditolak", () => stu.listStudents(magang), /tidak punya akses/);
+    await rejects("tanpa akses Jadwal & bukan tentor: jadwal ditolak", () => ses.listSessions(magang, { from: "2020-01-01", to: "2030-12-31" }), /tidak punya akses/);
+
+    // --- Admin sekaligus tentor ---
+    const bayu = await actor("bayu@bimbel.test");
+    const allSessions = await ses.listSessions(bayu, { from: "2020-01-01", to: "2030-12-31" });
+    check("admin+tentor melihat SEMUA jadwal", allSessions.some((s) => s.tutor_id !== bayu.id));
+    check("admin+tentor muncul di pilihan tentor pengampu", (await master.tutorOptions(admin)).some((t) => t.id === bayu.id));
+    check("admin+tentor punya daftar siswa yang diampu (bisa kosong)", Array.isArray(await rep.listMyAssignments(bayu)));
+    check("admin+tentor tetap bisa menerbitkan invoice", typeof (await inv.listReadyToBill(bayu)).length === "number");
+
+    // --- Jejak oleh siapa di data lain ---
+    const st = await stu.saveStudent(admin, { nama: "Uji Jejak", status: "aktif", programs: [] });
+    await stu.saveStudent(bayu, { id: st.id, nama: "Uji Jejak 2", status: "aktif", programs: [] });
+    const [stRow] = await db().select().from(students).where(eq(students.id, st.id));
+    check("siswa: created_by & updated_by tercatat", stRow.createdBy === admin.id && stRow.updatedBy === bayu.id && !!stRow.updatedAt);
+    await stu.softDeleteStudent(admin, st.id);
+    const [delRow] = await db().select().from(students).where(eq(students.id, st.id));
+    check("siswa: deleted_by tercatat saat dihapus", delRow.deletedBy === admin.id);
+
     const [{ n }] = await db().select({ n: count() }).from(auditLog).where(eq(auditLog.aksi, "ubah_akun"));
-    check("perubahan akun tercatat di audit log", n >= 2);
-    check("Super Admin punya semua hak admin", (await inv.listInvoices(sup)).total > 0);
+    check("perubahan akun tercatat di audit log", n >= 3);
+    const [lastAudit] = await db().select().from(auditLog).where(and(eq(auditLog.aksi, "ubah_akun"), eq(auditLog.target, admin.id)));
+    check("audit menyimpan akses lama → baru", JSON.stringify(lastAudit?.detail ?? {}).includes('"pengguna":"write"'));
+    check("Super Admin punya semua akses", (await inv.listInvoices(sup)).total > 0);
     const lunas = await inv.listInvoices(admin, { status: "lunas" });
     check("filter invoice lunas di DB", lunas.rows.every((i) => i.status_bayar === "lunas") && lunas.summary.all >= lunas.total);
+
+    // kembalikan akses admin seperti semula
+    await usr.updateUser(sup, { id: admin.id, nama: "Admin Bimbel", status: "aktif", is_tutor: false, is_superuser: false, perms: adminPerms });
   }
 
   console.log("\nProfil sendiri");

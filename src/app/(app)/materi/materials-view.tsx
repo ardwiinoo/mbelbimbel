@@ -6,7 +6,7 @@ import { Plus, Pencil, Trash2, MessageCircle, FileText, Loader2 } from "lucide-r
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataTable, Td, EmptyState } from "@/components/app/ui";
-import { Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
+import { FilterRow, filterSelectClass, Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
 import { FileLinks } from "@/components/app/file-link";
 import { FormDialog, Field } from "@/components/app/form-dialog";
 import { postForm } from "@/lib/post-form";
@@ -24,9 +24,11 @@ const previewable = (mime: string | null) => !!mime && (mime === "application/pd
 const materialSearchText = (m: MaterialRow) => `${m.judul} ${m.kategori} ${m.jenjang} ${m.file_name}`;
 const sizeLabel = (n: number | null) => (n ? (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`) : "");
 
-export function MaterialsView({ isAdmin, tutorName, waAdmin, materials }: {
-  isAdmin: boolean; tutorName: string; waAdmin: string | null; materials: MaterialRow[];
+export function MaterialsView({ canManage, tutorName, waAdmin, materials }: {
+  /** akses Bank Materi (Kelola) */
+  canManage: boolean; tutorName: string; waAdmin: string | null; materials: MaterialRow[];
 }) {
+  const isAdmin = canManage;
   const [kat, setKat] = useState("");
   const [jen, setJen] = useState("");
   const [editing, setEditing] = useState<MaterialRow | "new" | null>(null);
@@ -43,13 +45,13 @@ export function MaterialsView({ isAdmin, tutorName, waAdmin, materials }: {
   return (
     <div className="space-y-4">
       <Toolbar>
-        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari judul, kategori, jenjang, atau nama file..." />
-        <div className="grid grid-cols-2 gap-2 sm:flex [&>select]:sm:w-40">
-          <AppSelect className="sm:w-40" value={kat} onChange={setKat} aria-label="Kategori"
+        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari judul, kategori, jenjang…" />
+        <FilterRow>
+          <AppSelect className={filterSelectClass} value={kat} onChange={setKat} aria-label="Kategori"
             options={[{ value: "", label: "Semua kategori" }, ...kategoriList.map((k) => ({ value: k, label: k }))]} />
-          <AppSelect className="sm:w-40" value={jen} onChange={setJen} aria-label="Jenjang"
+          <AppSelect className={filterSelectClass} value={jen} onChange={setJen} aria-label="Jenjang"
             options={[{ value: "", label: "Semua jenjang" }, ...jenjangList.map((k) => ({ value: k, label: k }))]} />
-        </div>
+        </FilterRow>
         {isAdmin ? (
           <Button onClick={() => setEditing("new")}><Plus /> Upload Modul</Button>
         ) : (
@@ -78,7 +80,10 @@ export function MaterialsView({ isAdmin, tutorName, waAdmin, materials }: {
                     <p className="text-xs text-muted-foreground">{m.file_name} {sizeLabel(m.ukuran) && `• ${sizeLabel(m.ukuran)}`}</p>
                   </Td>
                   <Td>{m.kategori} • {m.jenjang}</Td>
-                  <Td className="whitespace-nowrap">{tanggal(m.updated_at, false)}</Td>
+                  <Td className="whitespace-nowrap">
+                    <p>{tanggal(m.updated_at, false)}</p>
+                    {m.updated_by && <p className="text-xs text-muted-foreground">oleh {m.updated_by}</p>}
+                  </Td>
                   <Td><FileLinks fileId={m.file_id} view={previewable(m.mime)} /></Td>
                   {isAdmin && (
                     <Td>
@@ -102,7 +107,7 @@ export function MaterialsView({ isAdmin, tutorName, waAdmin, materials }: {
                   <FileText className="mt-0.5 size-5 shrink-0 text-primary" />
                   <div>
                     <p className="font-semibold">{m.judul}</p>
-                    <p className="text-xs text-muted-foreground">{m.kategori} • {m.jenjang} • {tanggal(m.updated_at, false)}</p>
+                    <p className="text-xs text-muted-foreground">{m.kategori} • {m.jenjang} • {tanggal(m.updated_at, false)}{m.updated_by && ` oleh ${m.updated_by}`}</p>
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
@@ -163,8 +168,13 @@ function MaterialDialog({ m, onClose }: { m: MaterialRow | null; onClose: () => 
         }}
       />
       <button type="button" onClick={() => fileRef.current?.click()} className="w-full rounded-xl border-2 border-dashed p-5 text-sm text-muted-foreground hover:bg-muted">
-        {file ? <span className="font-medium text-foreground">{file.name}</span> : m ? `Ganti file (saat ini: ${m.file_name})` : "Pilih file: PDF, gambar, Word, PowerPoint, Excel (maks 25 MB)"}
+        {file ? <span className="font-medium text-foreground">{file.name}</span> : m ? `Ganti file (saat ini: ${m.file_name})` : "Pilih file: PDF, gambar, Word, PowerPoint, Excel (maks 25 MB). Saran: PDF agar bisa langsung dilihat tanpa unduh."}
       </button>
+      {m && (
+        <p className={file ? "rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" : "text-xs text-muted-foreground"}>
+          {file ? `File lama (${m.file_name}) akan dihapus permanen dan diganti file baru saat disimpan.` : "Mengganti file akan menghapus file lama."}
+        </p>
+      )}
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onClose}>Batal</Button>
         <Button disabled={busy} onClick={submit}>{busy && <Loader2 className="animate-spin" />} Simpan</Button>

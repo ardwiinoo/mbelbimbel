@@ -2,9 +2,13 @@ import { and, asc, eq, exists, inArray, isNull, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, files, programs, studentAssessments, studentPrograms, students, users } from "@/db/schema";
-import { isAdminRole } from "@/lib/roles";
-import { assertActive, assertAdmin, UserError, type Actor } from "../authz";
+import { can } from "@/lib/access";
+import { assertCan, scopeOf, UserError, type Actor } from "../authz";
 import { detachFileRow, purgeStoredFiles, withUploadedFile } from "../files";
+import { alias } from "drizzle-orm/pg-core";
+
+const creatorUser = alias(users, "creator_user");
+const updaterUser = alias(users, "updater_user");
 
 export type StudentRow = {
   id: string;
@@ -16,6 +20,8 @@ export type StudentRow = {
   ortu_nama: string | null;
   ortu_wa: string | null;
   status: "aktif" | "nonaktif";
+  /** jejak "oleh siapa" (null untuk data lama sebelum fitur ini) */
+  audit: { created_at: string; created_by: string | null; updated_at: string | null; updated_by: string | null };
   student_programs: {
     id: string;
     program_id: string;
@@ -23,22 +29,24 @@ export type StudentRow = {
     programs: { nama: string; kategori: string } | null;
     profiles: { nama: string } | null;
   }[];
-  /** Hanya diisi untuk admin. Tentor tidak pernah menerima data asesmen. */
+  /** Hanya diisi untuk pemegang akses Asesmen. Selain itu tidak pernah dikirim. */
   student_assessments?: { id: string; file_id: string; file_name: string; uploaded_at: string }[];
 };
 
 /**
  * Daftar siswa sesuai hak akses (pengganti RLS students/student_programs):
- * - admin: semua siswa + semua program + asesmen
+ * - akses Data Siswa (Lihat): semua siswa + semua program (+ asesmen bila punya akses Asesmen)
  * - tentor: hanya siswa yang ia ampu, hanya baris program miliknya, TANPA asesmen
  */
 export async function listStudents(actor: Actor): Promise<StudentRow[]> {
-  assertActive(actor);
-  const admin = isAdminRole(actor.role);
+  const admin = scopeOf(actor, "siswa") === "all"; // "own" = tentor: hanya siswa yang diampu
+  const withAssessment = can(actor, "asesmen", "read");
 
-  const studentRows = await db()
-    .select()
+  const rowsWithAudit = await db()
+    .select({ s: students, cNama: creatorUser.nama, uNama: updaterUser.nama })
     .from(students)
+    .leftJoin(creatorUser, eq(creatorUser.id, students.createdBy))
+    .leftJoin(updaterUser, eq(updaterUser.id, students.updatedBy))
     .where(
       and(
         isNull(students.deletedAt),
@@ -53,6 +61,7 @@ export async function listStudents(actor: Actor): Promise<StudentRow[]> {
       ),
     )
     .orderBy(asc(students.nama));
+  const studentRows = rowsWithAudit.map((r) => ({ ...r.s, cNama: r.cNama, uNama: r.uNama }));
   if (!studentRows.length) return [];
   const ids = studentRows.map((s) => s.id);
 
@@ -71,7 +80,7 @@ export async function listStudents(actor: Actor): Promise<StudentRow[]> {
     .leftJoin(users, eq(users.id, studentPrograms.tutorId))
     .where(and(inArray(studentPrograms.studentId, ids), admin ? undefined : eq(studentPrograms.tutorId, actor.id)));
 
-  const asmRows = admin
+  const asmRows = withAssessment
     ? await db()
         .select({
           id: studentAssessments.id,
@@ -95,6 +104,7 @@ export async function listStudents(actor: Actor): Promise<StudentRow[]> {
     ortu_nama: s.ortuNama,
     ortu_wa: s.ortuWa,
     status: s.status,
+    audit: { created_at: s.createdAt.toISOString(), created_by: s.cNama, updated_at: s.updatedAt?.toISOString() ?? null, updated_by: s.uNama },
     student_programs: spRows
       .filter((r) => r.studentId === s.id)
       .map((r) => ({
@@ -104,7 +114,7 @@ export async function listStudents(actor: Actor): Promise<StudentRow[]> {
         programs: { nama: r.programNama, kategori: r.kategori },
         profiles: r.tutorNama ? { nama: r.tutorNama } : null,
       })),
-    ...(admin
+    ...(withAssessment
       ? {
           student_assessments: asmRows
             .filter((a) => a.studentId === s.id)
@@ -132,7 +142,7 @@ export const studentSchema = z.object({
 export type StudentInput = z.input<typeof studentSchema>;
 
 export async function saveStudent(actor: Actor | null, input: StudentInput) {
-  assertAdmin(actor);
+  assertCan(actor, "siswa", "write");
   const parsed = studentSchema.safeParse(input);
   if (!parsed.success) throw new UserError(parsed.error.issues[0].message);
   const { id, programs: progs, ...v } = parsed.data;
@@ -150,10 +160,14 @@ export async function saveStudent(actor: Actor | null, input: StudentInput) {
   return db().transaction(async (tx) => {
     let studentId = id;
     if (id) {
-      const r = await tx.update(students).set(data).where(and(eq(students.id, id), isNull(students.deletedAt))).returning({ id: students.id });
+      const r = await tx
+        .update(students)
+        .set({ ...data, updatedAt: new Date(), updatedBy: actor.id })
+        .where(and(eq(students.id, id), isNull(students.deletedAt)))
+        .returning({ id: students.id });
       if (!r.length) throw new UserError("Siswa tidak ditemukan");
     } else {
-      const [r] = await tx.insert(students).values(data).returning({ id: students.id });
+      const [r] = await tx.insert(students).values({ ...data, createdBy: actor.id }).returning({ id: students.id });
       studentId = r.id;
     }
     // sinkronkan program + tentor pengampu
@@ -164,18 +178,21 @@ export async function saveStudent(actor: Actor | null, input: StudentInput) {
     for (const p of progs) {
       await tx
         .insert(studentPrograms)
-        .values({ studentId: studentId!, programId: p.program_id, tutorId: p.tutor_id })
-        .onConflictDoUpdate({ target: [studentPrograms.studentId, studentPrograms.programId], set: { tutorId: p.tutor_id } });
+        .values({ studentId: studentId!, programId: p.program_id, tutorId: p.tutor_id, createdBy: actor.id })
+        .onConflictDoUpdate({
+          target: [studentPrograms.studentId, studentPrograms.programId],
+          set: { tutorId: p.tutor_id, updatedAt: new Date(), updatedBy: actor.id },
+        });
     }
     return { id: studentId!, message: id ? "Data siswa diperbarui" : "Siswa ditambahkan" };
   });
 }
 
 export async function softDeleteStudent(actor: Actor | null, id: string) {
-  assertAdmin(actor);
+  assertCan(actor, "siswa", "write");
   const r = await db()
     .update(students)
-    .set({ deletedAt: new Date(), status: "nonaktif" })
+    .set({ deletedAt: new Date(), deletedBy: actor.id, status: "nonaktif", updatedAt: new Date(), updatedBy: actor.id })
     .where(and(eq(students.id, id), isNull(students.deletedAt)))
     .returning({ id: students.id });
   if (!r.length) throw new UserError("Siswa tidak ditemukan");
@@ -184,11 +201,11 @@ export async function softDeleteStudent(actor: Actor | null, id: string) {
 }
 
 /**
- * Upload / ganti dokumen asesmen ABK — khusus admin (pengganti RLS + Storage policy "assessments").
+ * Upload / ganti dokumen asesmen ABK — butuh akses Asesmen (Kelola).
  * Satu siswa = satu dokumen aktif: dokumen lama dihapus (DB + disk) saat diganti.
  */
 export async function addAssessment(actor: Actor | null, studentId: string, file: File | null) {
-  assertAdmin(actor);
+  assertCan(actor, "asesmen", "write");
   if (!/^[0-9a-f-]{36}$/i.test(studentId)) throw new UserError("Siswa tidak ditemukan");
   const [s] = await db().select({ id: students.id }).from(students).where(and(eq(students.id, studentId), isNull(students.deletedAt))).limit(1);
   if (!s) throw new UserError("Siswa tidak ditemukan");

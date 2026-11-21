@@ -2,8 +2,13 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db, type Tx } from "@/db";
 import { auditLog, files, materials } from "@/db/schema";
-import { assertActive, assertAdmin, UserError, type Actor } from "../authz";
+import { assertCan, UserError, type Actor } from "../authz";
 import { detachFileRow, purgeStoredFiles, withUploadedFile } from "../files";
+import { alias } from "drizzle-orm/pg-core";
+import { users } from "@/db/schema";
+
+const updaterUser = alias(users, "updater_user");
+const uploaderUser = alias(users, "uploader_user");
 
 export type MaterialRow = {
   id: string;
@@ -15,18 +20,22 @@ export type MaterialRow = {
   mime: string;
   ukuran: number;
   updated_at: string;
+  /** nama pengunggah / pengubah terakhir */
+  updated_by: string | null;
 };
 
 /** Semua user aktif boleh membaca bank materi. */
 export async function listMaterials(actor: Actor): Promise<MaterialRow[]> {
-  assertActive(actor);
+  assertCan(actor, "materi", "read");
   const rows = await db()
-    .select({ m: materials, f: files })
+    .select({ m: materials, f: files, uNama: updaterUser.nama, cNama: uploaderUser.nama })
     .from(materials)
     .innerJoin(files, eq(files.id, materials.fileId))
+    .leftJoin(updaterUser, eq(updaterUser.id, materials.updatedBy))
+    .leftJoin(uploaderUser, eq(uploaderUser.id, materials.uploadedBy))
     .where(isNull(materials.deletedAt))
     .orderBy(desc(materials.updatedAt));
-  return rows.map(({ m, f }) => ({
+  return rows.map(({ m, f, uNama, cNama }) => ({
     id: m.id,
     judul: m.judul,
     kategori: m.kategori,
@@ -36,6 +45,7 @@ export async function listMaterials(actor: Actor): Promise<MaterialRow[]> {
     mime: f.mime,
     ukuran: f.size,
     updated_at: m.updatedAt.toISOString(),
+    updated_by: uNama ?? cNama ?? null,
   }));
 }
 
@@ -48,7 +58,7 @@ const metaSchema = z.object({
 
 /** Tambah/edit materi (admin). File wajib saat tambah, opsional saat edit (ganti file). */
 export async function saveMaterial(actor: Actor | null, input: z.input<typeof metaSchema> & { file: File | null }) {
-  assertAdmin(actor);
+  assertCan(actor, "materi", "write");
   const p = metaSchema.safeParse(input);
   if (!p.success) throw new UserError(p.error.issues[0].message);
   const { id, ...meta } = p.data;
@@ -66,7 +76,7 @@ export async function saveMaterial(actor: Actor | null, input: z.input<typeof me
       if (!cur) throw new UserError("Materi tidak ditemukan");
       await tx
         .update(materials)
-        .set({ ...meta, ...(fileId ? { fileId } : {}), updatedAt: new Date() })
+        .set({ ...meta, ...(fileId ? { fileId } : {}), updatedAt: new Date(), updatedBy: actor.id })
         .where(eq(materials.id, id));
       return fileId ? detachFileRow(tx, cur.fileId) : null;
     }
@@ -81,10 +91,10 @@ export async function saveMaterial(actor: Actor | null, input: z.input<typeof me
 }
 
 export async function softDeleteMaterial(actor: Actor | null, id: string) {
-  assertAdmin(actor);
+  assertCan(actor, "materi", "write");
   const r = await db()
     .update(materials)
-    .set({ deletedAt: new Date() })
+    .set({ deletedAt: new Date(), deletedBy: actor.id })
     .where(and(eq(materials.id, id), isNull(materials.deletedAt)))
     .returning({ id: materials.id });
   if (!r.length) throw new UserError("Materi tidak ditemukan");

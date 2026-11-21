@@ -14,7 +14,8 @@
     "db:up": "docker compose -f docker-compose.dev.yml up -d",
     "db:down": "docker compose -f docker-compose.dev.yml down",
     "test:authz": "tsx --env-file-if-exists=.env.local scripts/test-authz.ts",
-    "db:reset": "tsx --env-file-if-exists=.env.local scripts/reset-dev.ts"
+    "db:reset": "tsx --env-file-if-exists=.env.local scripts/reset-dev.ts",
+    "test:migrasi": "tsx --env-file-if-exists=.env.local scripts/test-migration-conversion.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

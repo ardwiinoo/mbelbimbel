@@ -2,10 +2,12 @@ import { and, asc, count, desc, eq, ilike, inArray, isNull, or, sql } from "driz
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import { appSettings, invoiceCounters, invoiceItems, invoices, programs, sessions, students, users } from "@/db/schema";
-import { assertAdmin, UserError, type Actor } from "../authz";
+import { assertCan, UserError, type Actor } from "../authz";
 import { likePattern } from "./reports";
 
 const tutorUser = alias(users, "tutor_user");
+const creatorUser = alias(users, "creator_user");
+const updaterUser = alias(users, "updater_user");
 
 export type ReadySession = {
   id: string;
@@ -23,13 +25,16 @@ export type InvoiceRow = {
   total: number;
   status_bayar: "lunas" | "belum_lunas";
   tgl_bayar: string | null;
+  /** nama penerbit & pengubah terakhir (status bayar) */
+  created_by: string | null;
+  updated_by: string | null;
   students: { nama: string; kelas: string | null; ortu_nama: string | null; ortu_wa: string | null } | null;
   programs: { nama: string } | null;
 };
 
 /** Sesi Hadir + Belum Rekap (Daftar Siap Tagih). Admin saja. */
 export async function listReadyToBill(actor: Actor): Promise<ReadySession[]> {
-  assertAdmin(actor);
+  assertCan(actor, "invoice", "read");
   const rows = await db()
     .select({ s: sessions, nama: students.nama, kelas: students.kelas, tNama: tutorUser.nama })
     .from(sessions)
@@ -55,7 +60,7 @@ export async function listInvoices(
   actor: Actor,
   opts: InvoiceListOpts = {},
 ): Promise<{ rows: InvoiceRow[]; total: number; summary: InvoiceSummary }> {
-  assertAdmin(actor);
+  assertCan(actor, "invoice", "read");
   const pageSize = Math.min(Math.max(opts.pageSize ?? 20, 1), 100);
   const page = Math.max(1, Math.floor(opts.page ?? 1));
   const status = opts.status === "lunas" || opts.status === "belum_lunas" ? opts.status : undefined;
@@ -74,9 +79,11 @@ export async function listInvoices(
       unpaid: sql<number>`count(*) filter (where ${invoices.statusBayar} = 'belum_lunas')`.mapWith(Number),
       unpaidTotal: sql<number>`coalesce(sum(${invoices.total}) filter (where ${invoices.statusBayar} = 'belum_lunas'), 0)`.mapWith(Number),
     }).from(invoices),
-    db().select({ i: invoices, s: students, pNama: programs.nama }).from(invoices)
+    db().select({ i: invoices, s: students, pNama: programs.nama, cNama: creatorUser.nama, uNama: updaterUser.nama }).from(invoices)
       .innerJoin(students, eq(students.id, invoices.studentId))
       .innerJoin(programs, eq(programs.id, invoices.programId))
+      .leftJoin(creatorUser, eq(creatorUser.id, invoices.createdBy))
+      .leftJoin(updaterUser, eq(updaterUser.id, invoices.updatedBy))
       .where(where)
       .orderBy(desc(invoices.tglTerbit), desc(invoices.nomor))
       .limit(pageSize)
@@ -85,7 +92,7 @@ export async function listInvoices(
   return {
     total,
     summary: { all: sum.all, unpaid: sum.unpaid, paid: sum.all - sum.unpaid, unpaidTotal: sum.unpaidTotal },
-    rows: rows.map(({ i, s, pNama }) => ({
+    rows: rows.map(({ i, s, pNama, cNama, uNama }) => ({
       id: i.id,
       nomor: i.nomor,
       tgl_terbit: i.tglTerbit.toISOString(),
@@ -93,6 +100,8 @@ export async function listInvoices(
       total: i.total,
       status_bayar: i.statusBayar,
       tgl_bayar: i.tglBayar,
+      created_by: cNama ?? null,
+      updated_by: uNama ?? null,
       students: { nama: s.nama, kelas: s.kelas, ortu_nama: s.ortuNama, ortu_wa: s.ortuWa },
       programs: { nama: pNama },
     })),
@@ -105,7 +114,7 @@ export async function listInvoices(
  * → snapshot tarif ke invoice_items → sesi jadi Terekap. Gagal = rollback semua.
  */
 export async function issueInvoice(actor: Actor | null, studentId: string, programId: string, sessionIds: string[]) {
-  assertAdmin(actor);
+  assertCan(actor, "invoice", "write");
   const uuid = /^[0-9a-f-]{36}$/i;
   const ids = [...new Set(sessionIds)];
   if (!ids.length) throw new UserError("Pilih minimal satu sesi");
@@ -140,19 +149,22 @@ export async function issueInvoice(actor: Actor | null, studentId: string, progr
       .values({ nomor, studentId, programId, jumlahSesi: valid.length, total: valid.length * prog.tarif, createdBy: actor.id })
       .returning({ id: invoices.id });
     await tx.insert(invoiceItems).values(valid.map((s) => ({ invoiceId: inv.id, sessionId: s.id, tanggal: s.mulaiAt, tarifSnapshot: prog.tarif })));
-    await tx.update(sessions).set({ statusTagihan: "terekap", invoiceId: inv.id }).where(inArray(sessions.id, ids));
+    await tx
+      .update(sessions)
+      .set({ statusTagihan: "terekap", invoiceId: inv.id, updatedAt: new Date(), updatedBy: actor.id })
+      .where(inArray(sessions.id, ids));
     return { id: inv.id, message: `Invoice ${nomor} terbit` };
   });
 }
 
 export async function setPaid(actor: Actor | null, id: string, lunas: boolean, tglBayar?: string) {
-  assertAdmin(actor);
+  assertCan(actor, "invoice", "write");
   if (tglBayar && !/^\d{4}-\d{2}-\d{2}$/.test(tglBayar)) throw new UserError("Tanggal bayar tidak valid");
   const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
   if (tglBayar && tglBayar > today) throw new UserError("Tanggal bayar tidak boleh di masa depan");
   const r = await db()
     .update(invoices)
-    .set({ statusBayar: lunas ? "lunas" : "belum_lunas", tglBayar: lunas ? tglBayar || today : null })
+    .set({ statusBayar: lunas ? "lunas" : "belum_lunas", tglBayar: lunas ? tglBayar || today : null, updatedAt: new Date(), updatedBy: actor.id })
     .where(eq(invoices.id, id))
     .returning({ id: invoices.id });
   if (!r.length) throw new UserError("Invoice tidak ditemukan");
@@ -161,7 +173,7 @@ export async function setPaid(actor: Actor | null, id: string, lunas: boolean, t
 
 /** Data nota PDF dari snapshot (tarif di invoice_items, bukan tarif master saat ini). */
 export async function getInvoicePdfData(actor: Actor | null, id: string) {
-  assertAdmin(actor);
+  assertCan(actor, "invoice", "read");
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
   const [row] = await db()
     .select({ i: invoices, s: students, pNama: programs.nama })

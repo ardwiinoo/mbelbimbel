@@ -15,6 +15,20 @@
       "when": 1795247957825,
       "tag": "0001_report_edit",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795267156967,
+      "tag": "0002_akses_per_modul",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795267169771,
+      "tag": "0003_hapus_role",
+      "breakpoints": true
     }
   ]
 }

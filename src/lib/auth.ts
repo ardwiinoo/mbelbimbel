@@ -6,17 +6,14 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { appSettings } from "@/db/schema";
 import { findSessionUser, SESSION_COOKIE } from "@/server/session";
-import { isAdminRole, isSuperAdmin, type Role } from "@/lib/roles";
+import { loadPermissions, type Actor } from "@/server/authz";
+import { can, type Level, type Module } from "@/lib/access";
 
-export type { Role };
-export type Profile = {
-  id: string;
+/** User yang sedang login: Actor (akses) + data profil untuk tampilan. */
+export type Profile = Actor & {
   email: string | null;
-  nama: string;
   no_wa: string | null;
-  role: Role;
   spesialisasi: string | null;
-  status: "aktif" | "nonaktif";
 };
 
 /** User dari cookie sesi (null bila tidak login / sesi kedaluwarsa). Di-cache per request. */
@@ -25,7 +22,18 @@ export const getProfile = cache(async (): Promise<Profile | null> => {
   if (!token) return null;
   const u = await findSessionUser(token);
   if (!u) return null;
-  return { id: u.id, email: u.email, nama: u.nama, no_wa: u.noWa, role: u.role, spesialisasi: u.spesialisasi, status: u.status };
+  return {
+    id: u.id,
+    email: u.email,
+    nama: u.nama,
+    no_wa: u.noWa,
+    spesialisasi: u.spesialisasi,
+    status: u.status,
+    isTutor: u.isTutor,
+    isSuperuser: u.isSuperuser,
+    // Dibaca dari DB setiap request → perubahan akses langsung berlaku tanpa login ulang
+    perms: u.isSuperuser ? {} : await loadPermissions(u.id),
+  };
 });
 
 export async function requireProfile() {
@@ -36,15 +44,17 @@ export async function requireProfile() {
   return p;
 }
 
-export async function requireAdmin() {
+/** Halaman yang butuh akses modul tertentu; tanpa akses → kembali ke Beranda. */
+export async function requireAccess(module: Module, level: Level = "read") {
   const p = await requireProfile();
-  if (!isAdminRole(p.role)) redirect("/");
+  if (!can(p, module, level)) redirect("/");
   return p;
 }
 
-export async function requireSuperAdmin() {
+/** Halaman yang bisa dibuka dengan akses modul ATAU sebagai tentor (data milik sendiri). */
+export async function requireAccessOrTutor(module: Module) {
   const p = await requireProfile();
-  if (!isSuperAdmin(p.role)) redirect("/");
+  if (!can(p, module, "read") && !p.isTutor) redirect("/");
   return p;
 }
 

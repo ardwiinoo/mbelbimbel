@@ -1,36 +1,55 @@
-import { isAdminRole } from "@/lib/roles";
-import { requireProfile } from "@/lib/auth";
-import { PageHeader } from "@/components/app/ui";
+import { requireAccessOrTutor } from "@/lib/auth";
+import { can } from "@/lib/access";
+import { PageHeader, SectionHeader } from "@/components/app/ui";
 import { listMyAssignments, listReports } from "@/server/services/reports";
 import { TutorReports, AdminReports } from "./views";
 
 export const metadata = { title: "Laporan Perkembangan" };
 
 export default async function LaporanPage({ searchParams }: PageProps<"/laporan">) {
-  const profile = await requireProfile();
+  const me = await requireAccessOrTutor("laporan");
+  const viewAll = can(me, "laporan", "read");
+  const canEditAll = can(me, "laporan", "write");
 
-  if (isAdminRole(profile.role)) {
+  // Bagian "Laporan Siswa Saya" untuk akun yang mengajar (termasuk admin sekaligus tentor)
+  const own = me.isTutor
+    ? await Promise.all([listReports(me, { pageSize: 500, mine: true }), listMyAssignments(me)])
+    : null;
+
+  // Bagian "Semua Laporan" untuk pemegang akses Laporan (paging & cari di DB)
+  let all: { rows: Awaited<ReturnType<typeof listReports>>["rows"]; total: number; page: number } | null = null;
+  if (viewAll) {
     const sp = await searchParams;
     const q = typeof sp.q === "string" ? sp.q : "";
     const page = Math.max(1, Number(sp.page) || 1);
-    const { rows, total } = await listReports(profile, { q, page, pageSize: 20 }); // paging di DB
-    return (
-      <>
-        <PageHeader title="Laporan Perkembangan" desc="Semua laporan PDF yang diunggah tentor. Admin bisa mengedit bila ada salah upload." />
-        <AdminReports reports={rows} total={total} page={page} />
-      </>
-    );
+    const r = await listReports(me, { q, page, pageSize: 20 });
+    all = { ...r, page };
   }
 
-  // Tentor: hanya laporan miliknya (jumlahnya kecil), dikelompokkan per siswa.
-  const [{ rows }, assignments] = await Promise.all([listReports(profile, { pageSize: 500 }), listMyAssignments(profile)]);
   return (
     <>
       <PageHeader
         title="Laporan Perkembangan"
-        desc="Ketik laporan di Word, ekspor ke PDF, lalu unggah di sini. Salah upload? Pakai tombol Edit di riwayat."
+        desc={
+          viewAll
+            ? "Laporan PDF dari tentor. Bisa diedit bila ada salah upload; setiap perubahan tercatat."
+            : "Ketik laporan di Word, ekspor ke PDF, lalu unggah di sini. Salah upload? Pakai tombol Edit di riwayat."
+        }
       />
-      <TutorReports assignments={assignments} reports={rows} />
+      <div className="space-y-10">
+        {own && (
+          <section className="space-y-4">
+            {viewAll && <SectionHeader title="Laporan Siswa Saya" desc="Siswa yang Anda ampu sebagai tentor." />}
+            <TutorReports assignments={own[1]} reports={own[0].rows} />
+          </section>
+        )}
+        {all && (
+          <section className="space-y-4">
+            {own && <SectionHeader title="Semua Laporan" />}
+            <AdminReports reports={all.rows} total={all.total} page={all.page} meId={me.id} canEditAll={canEditAll} />
+          </section>
+        )}
+      </div>
     </>
   );
 }
