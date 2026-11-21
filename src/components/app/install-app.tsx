@@ -25,9 +25,24 @@ export function InstallCard() {
       </p>
       <Button
         onClick={async () => {
-          if (!canPrompt) return setShowHelp(true);
-          const r = await install();
-          if (r === "accepted") toast.success("Aplikasi sedang dipasang");
+          if (!canPrompt) {
+            // Browser tidak menawarkan install otomatis → selalu beri respons yang terlihat
+            setShowHelp(true);
+            toast.info("Browser belum menawarkan install otomatis. Ikuti langkah di bawah tombol ini.");
+            return;
+          }
+          try {
+            const r = await install();
+            if (r === "accepted") toast.success("Aplikasi sedang dipasang. Cek layar utama HP Anda.");
+            else if (r === "dismissed") toast.info("Install dibatalkan. Tekan tombol lagi kapan saja.");
+            else {
+              setShowHelp(true);
+              toast.info("Ikuti langkah manual di bawah tombol ini.");
+            }
+          } catch {
+            setShowHelp(true);
+            toast.error("Dialog install gagal dibuka. Ikuti langkah manual di bawah.");
+          }
         }}
       >
         <Download /> Install Aplikasi
@@ -51,7 +66,9 @@ function InstallHelp({ platform }: { platform: "ios" | "android" | "desktop" }) 
         ? [
             <>Buka di <b>Chrome</b></>,
             <>Ketuk menu <MoreVertical className="inline size-4" /> di kanan atas</>,
-            <>Pilih <b>Instal aplikasi</b> / <b>Tambahkan ke layar utama</b></>,
+            <>
+              Pilih <b>Tambahkan ke layar utama</b> (di sebagian versi: <b>Instal aplikasi</b>), lalu pilih <b>Instal</b>
+            </>,
           ]
         : [
             <>Buka di <b>Chrome</b> atau <b>Edge</b></>,
@@ -64,8 +81,15 @@ function InstallHelp({ platform }: { platform: "ios" | "android" | "desktop" }) 
         <li key={i}>{s}</li>
       ))}
       {platform === "android" && (
-        <li className="text-muted-foreground">
-          Bila sebelumnya macet di &quot;Menginstal…&quot;: hapus ikon lama, buka Setelan Chrome → Setelan situs → hapus data situs ini, lalu coba lagi.
+        <li className="list-none pt-2 text-muted-foreground">
+          <b className="text-foreground">Opsi install tidak muncul / sebelumnya macet di &quot;Menginstal…&quot;?</b>
+          <span className="mt-1 block">
+            1) Setelan HP → Aplikasi → cari <b>Bimbel</b> → Uninstall (sisa install lama, kadang tanpa ikon).
+            <br />
+            2) Chrome → Setelan → Setelan situs → Semua situs → situs ini → <b>Hapus &amp; reset</b>.
+            <br />
+            3) Tutup Chrome sepenuhnya, buka lagi, lalu tekan tombol Install.
+          </span>
         </li>
       )}
     </ol>
