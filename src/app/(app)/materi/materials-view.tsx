@@ -15,6 +15,7 @@ import { tanggal, waLink } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { softDeleteMaterial } from "./actions";
 import { AppSelect } from "@/components/app/app-select";
+import { confirmDialog } from "@/components/app/confirm";
 
 export type { MaterialRow };
 
@@ -89,8 +90,9 @@ export function MaterialsView({ canManage, tutorName, waAdmin, materials }: {
                     <Td>
                       <div className="flex gap-1">
                         <Button size="icon-sm" variant="ghost" aria-label="Edit" onClick={() => setEditing(m)}><Pencil /></Button>
-                        <Button size="icon-sm" variant="ghost" aria-label="Hapus" disabled={pending} onClick={() => {
-                          if (!confirm(`Hapus "${m.judul}"?`)) return;
+                        <Button size="icon-sm" variant="ghost" aria-label="Hapus" disabled={pending} onClick={async () => {
+                          const ok = await confirmDialog({ title: `Hapus materi "${m.judul}"?`, desc: "Materi tidak lagi tampil di Bank Materi.", confirmLabel: "Hapus", tone: "danger" });
+                          if (!ok) return;
                           start(async () => { const r = await softDeleteMaterial(m.id); if (r.ok) toast.success(r.message); else toast.error(r.error); });
                         }}><Trash2 className="text-destructive" /></Button>
                       </div>

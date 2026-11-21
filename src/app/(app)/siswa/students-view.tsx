@@ -13,6 +13,7 @@ import type { StudentRow } from "@/server/services/students";
 import { StudentDialog } from "./student-dialog";
 import { softDeleteStudent } from "./actions";
 import { AppSelect } from "@/components/app/app-select";
+import { confirmDialog } from "@/components/app/confirm";
 
 export type { StudentRow };
 
@@ -232,7 +233,17 @@ function AssessmentCell({ s, canUpload }: { s: StudentRow; canUpload: boolean })
     if (f.size > 10 * 1024 * 1024) return toast.error("Maksimal 10 MB");
     if (
       latest &&
-      !confirm(`Ganti dokumen asesmen ${s.nama}?\n\nFile lama (${latest.file_name ?? "dokumen"}) akan DIHAPUS PERMANEN dan diganti "${f.name}".`)
+      !(await confirmDialog({
+        title: `Ganti dokumen asesmen ${s.nama}?`,
+        desc: (
+          <>
+            File lama <b className="text-foreground">{latest.file_name ?? "dokumen"}</b> akan <b className="text-foreground">dihapus permanen</b> dan diganti{" "}
+            <b className="text-foreground">{f.name}</b>.
+          </>
+        ),
+        confirmLabel: "Ganti file",
+        tone: "danger",
+      }))
     ) {
       if (inputRef.current) inputRef.current.value = "";
       return;
@@ -293,8 +304,14 @@ function RowActions({ s, onEdit }: { s: StudentRow; onEdit: () => void }) {
         variant="ghost"
         disabled={pending}
         aria-label="Hapus"
-        onClick={() => {
-          if (!confirm(`Hapus ${s.nama}? Data tetap tersimpan (soft delete).`)) return;
+        onClick={async () => {
+          const ok = await confirmDialog({
+            title: `Hapus ${s.nama}?`,
+            desc: "Siswa hilang dari daftar, tetapi datanya tetap tersimpan dan bisa dipulihkan oleh Super Admin.",
+            confirmLabel: "Hapus",
+            tone: "danger",
+          });
+          if (!ok) return;
           start(async () => {
             const r = await softDeleteStudent(s.id);
             if (r.ok) toast.success(r.message);

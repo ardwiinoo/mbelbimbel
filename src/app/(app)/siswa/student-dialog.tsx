@@ -11,6 +11,7 @@ import { FormDialog, Field } from "@/components/app/form-dialog";
 import { saveStudent, type StudentInput } from "./actions";
 import type { StudentRow } from "./students-view";
 import { AppSelect } from "@/components/app/app-select";
+import { DatePicker } from "@/components/app/date-picker";
 
 type Opt = { id: string; nama: string };
 
@@ -79,7 +80,9 @@ export function StudentDialog({
           <Input {...register("nama", { required: true })} />
         </Field>
         <Field label="Tanggal lahir" hint="Umur dihitung otomatis">
-          <Input type="date" {...register("tanggal_lahir")} />
+          <Controller control={control} name="tanggal_lahir" render={({ field }) => (
+            <DatePicker clearable placeholder="Pilih tanggal lahir" max={new Date().toISOString().slice(0, 10)} value={field.value ?? ""} onChange={field.onChange} />
+          )} />
         </Field>
         <Field label="Kelas">
           <Input placeholder="Kelas 4 SD" {...register("kelas")} />

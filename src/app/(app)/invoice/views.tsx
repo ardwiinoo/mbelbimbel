@@ -3,7 +3,6 @@ import { Fragment, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { ChevronRight, FilePlus2, FileText, CheckCircle2, BadgeCheck, Undo2 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { FormDialog, Field } from "@/components/app/form-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable, Td, Pill, EmptyState, SectionHeader } from "@/components/app/ui";
@@ -15,6 +14,7 @@ import { issueInvoice, setPaid } from "./actions";
 import { AppSelect } from "@/components/app/app-select";
 
 import type { InvoiceRow, InvoiceSummary, ReadySession } from "@/server/services/invoices";
+import { DatePicker } from "@/components/app/date-picker";
 
 export type { InvoiceRow, ReadySession };
 
@@ -182,7 +182,7 @@ function PaymentDialog({ inv, onClose }: { inv: InvoiceRow; onClose: () => void 
       onClose={onClose}
     >
       <Field label="Tanggal pembayaran diterima">
-        <Input type="date" value={tgl} max={todayWib()} onChange={(e) => setTgl(e.target.value)} />
+        <DatePicker value={tgl} max={todayWib()} onChange={setTgl} />
       </Field>
       <p className="text-xs text-muted-foreground">Status di nota PDF ikut berubah menjadi LUNAS beserta tanggalnya.</p>
       <div className="flex flex-wrap justify-end gap-2">
