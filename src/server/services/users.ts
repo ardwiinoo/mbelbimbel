@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, sessions, users } from "@/db/schema";
 import type { Role } from "@/lib/roles";
-import { assertSuperAdmin, UserError, type Actor } from "../authz";
+import { assertActive, assertSuperAdmin, UserError, type Actor } from "../authz";
 import { dummyVerify, hashPassword, verifyPassword } from "../password";
 import { deleteUserSessions } from "../session";
 
@@ -187,4 +187,49 @@ export async function resetPassword(actor: Actor | null, id: string, password: s
 export async function hasAnyUser() {
   const [{ n }] = await db().select({ n: count() }).from(users).where(ne(users.email, ""));
   return n > 0;
+}
+
+// ---------- PROFIL SENDIRI (semua peran) ----------
+async function assertCurrentPassword(userId: string, currentPassword: string) {
+  const [u] = await db().select({ hash: users.passwordHash }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!u || !(await verifyPassword(currentPassword, u.hash))) throw new UserError("Password saat ini salah");
+}
+
+/** Ganti email login sendiri. Wajib konfirmasi password saat ini (tanpa verifikasi email). */
+export async function changeOwnEmail(actor: Actor | null, newEmail: string, currentPassword: string) {
+  assertActive(actor);
+  const email = z.string().trim().toLowerCase().email("Email tidak valid").safeParse(newEmail);
+  if (!email.success) throw new UserError(email.error.issues[0].message);
+  await assertCurrentPassword(actor.id, currentPassword);
+  try {
+    await db().update(users).set({ email: email.data, updatedAt: new Date() }).where(eq(users.id, actor.id));
+  } catch (e) {
+    if ((e as { cause?: { code?: string } }).cause?.code === "23505") throw new UserError("Email sudah dipakai akun lain");
+    throw e;
+  }
+  await db().insert(auditLog).values({ actorId: actor.id, aksi: "ganti_email", target: actor.id, detail: { email_baru: email.data } });
+  return "Email login diperbarui";
+}
+
+/**
+ * Ganti password sendiri. Sesi di perangkat LAIN diputus; sesi saat ini (`keepToken`) tetap.
+ */
+export async function changeOwnPassword(actor: Actor | null, currentPassword: string, newPassword: string, keepToken?: string) {
+  assertActive(actor);
+  if (newPassword.length < 8 || newPassword.length > 200) throw new UserError("Password baru minimal 8 karakter");
+  if (newPassword === currentPassword) throw new UserError("Password baru harus berbeda");
+  await assertCurrentPassword(actor.id, currentPassword);
+  await db().update(users).set({ passwordHash: await hashPassword(newPassword), updatedAt: new Date() }).where(eq(users.id, actor.id));
+  await deleteUserSessions(actor.id, keepToken);
+  await db().insert(auditLog).values({ actorId: actor.id, aksi: "ganti_password", target: actor.id });
+  return "Password diperbarui. Perangkat lain otomatis keluar.";
+}
+
+export async function getOwnProfile(actor: Actor) {
+  assertActive(actor);
+  const [u] = await db()
+    .select({ email: users.email, nama: users.nama, noWa: users.noWa, role: users.role, spesialisasi: users.spesialisasi, createdAt: users.createdAt })
+    .from(users)
+    .where(eq(users.id, actor.id));
+  return u;
 }

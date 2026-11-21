@@ -6,13 +6,15 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormDialog, Field } from "@/components/app/form-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DataTable, Td, Pill, EmptyState, selectClass } from "@/components/app/ui";
+import { DataTable, Td, Pill, EmptyState, SectionHeader } from "@/components/app/ui";
+import { SearchBox, ServerPager, ServerSearch, Toolbar, useQueryNav } from "@/components/app/table-kit";
 import { ShareWaButton } from "@/components/app/share-wa";
 import { rupiah, tanggal, jam, bulanWib, namaBulan } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { issueInvoice, setPaid } from "./actions";
+import { AppSelect } from "@/components/app/app-select";
 
-import type { InvoiceRow, ReadySession } from "@/server/services/invoices";
+import type { InvoiceRow, InvoiceSummary, ReadySession } from "@/server/services/invoices";
 
 export type { InvoiceRow, ReadySession };
 
@@ -26,8 +28,16 @@ export function ReadyToBill({ sessions, programs }: { sessions: ReadySession[]; 
   const [pending, start] = useTransition();
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
+  const [q, setQ] = useState("");
   const programMap = useMemo(() => new Map(programs.map((p) => [p.id, p])), [programs]);
-  const visible = sessions.filter((s) => !month || bulanWib(s.mulai_at) === month);
+  const visible = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return sessions.filter(
+      (s) =>
+        (!month || bulanWib(s.mulai_at) === month) &&
+        (!needle || `${s.students?.nama} ${programMap.get(s.program_id)?.nama ?? ""}`.toLowerCase().includes(needle)),
+    );
+  }, [sessions, month, q, programMap]);
 
   const groups = useMemo(() => {
     const m = new Map<string, ReadySession[]>();
@@ -67,19 +77,16 @@ export function ReadyToBill({ sessions, programs }: { sessions: ReadySession[]; 
   }
 
   return (
-    <section className="space-y-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="font-semibold">A. Daftar Siap Tagih</h2>
-        <div className="flex gap-2">
-          <select className={cn(selectClass, "w-auto")} value={month} onChange={(e) => setMonth(e.target.value)}>
-            <option value="">Semua bulan</option>
-            {months.map((m) => <option key={m} value={m}>{namaBulan(m)}</option>)}
-          </select>
-          <Button variant="outline" onClick={selectAllMonth} disabled={!visible.length}>
-            <CheckCircle2 /> Pilih semua {month ? "bulan ini" : ""}
-          </Button>
-        </div>
-      </div>
+    <section className="space-y-4">
+      <SectionHeader title="A. Daftar Siap Tagih" desc="Klik nama siswa untuk melihat & mencentang sesi. Sesi yang tidak dicentang tetap Belum Rekap." />
+      <Toolbar>
+        <SearchBox value={q} onChange={setQ} placeholder="Cari siswa atau program..." />
+        <AppSelect className="sm:w-44" value={month} onChange={setMonth} aria-label="Bulan"
+          options={[{ value: "", label: "Semua bulan" }, ...months.map((m) => ({ value: m, label: namaBulan(m) }))]} />
+        <Button variant="outline" onClick={selectAllMonth} disabled={!visible.length}>
+          <CheckCircle2 /> Pilih semua {month ? "bulan ini" : ""}
+        </Button>
+      </Toolbar>
 
       {groups.length === 0 ? (
         <EmptyState title="Tidak ada sesi siap tagih" desc="Sesi berstatus Hadir dan Belum Rekap akan muncul di sini." />
@@ -101,7 +108,7 @@ export function ReadyToBill({ sessions, programs }: { sessions: ReadySession[]; 
                   </Td>
                   <Td>{prog?.nama}<p className="text-xs text-muted-foreground">{rupiah(tarif)} / pertemuan</p></Td>
                   <Td>{chosen.length} <span className="text-muted-foreground">dari {list.length}</span> Pertemuan</Td>
-                  <Td className="font-semibold tabular-nums">{rupiah(chosen.length * tarif)}</Td>
+                  <Td className="font-medium tabular-nums">{rupiah(chosen.length * tarif)}</Td>
                   <Td>
                     <Button size="sm" disabled={pending || !chosen.length} onClick={() => terbitkan(key, list)}>
                       <FilePlus2 /> {busyKey === key ? "Menerbitkan..." : "Terbitkan"}
@@ -135,7 +142,6 @@ export function ReadyToBill({ sessions, programs }: { sessions: ReadySession[]; 
           })}
         </DataTable>
       )}
-      <p className="text-xs text-muted-foreground">Klik nama siswa untuk melihat & mencentang sesi. Sesi yang tidak dicentang tetap Belum Rekap.</p>
     </section>
   );
 }
@@ -179,51 +185,68 @@ function PaymentDialog({ inv, onClose }: { inv: InvoiceRow; onClose: () => void 
   );
 }
 
-export function InvoiceHistory({ invoices }: { invoices: InvoiceRow[] }) {
-  const [filter, setFilter] = useState<"" | "belum_lunas" | "lunas">("");
+export function InvoiceHistory({
+  invoices,
+  total,
+  summary,
+  page,
+  status,
+}: {
+  invoices: InvoiceRow[];
+  total: number;
+  summary: InvoiceSummary;
+  page: number;
+  status: string;
+}) {
   const [paying, setPaying] = useState<InvoiceRow | null>(null);
-  const rows = invoices.filter((i) => !filter || i.status_bayar === filter);
-  const unpaid = invoices.filter((i) => i.status_bayar === "belum_lunas");
+  const { set, pending } = useQueryNav();
   const tabs = [
-    { k: "", label: `Semua (${invoices.length})` },
-    { k: "belum_lunas", label: `Belum Lunas (${unpaid.length})` },
-    { k: "lunas", label: `Lunas (${invoices.length - unpaid.length})` },
+    { k: "", label: `Semua (${summary.all})` },
+    { k: "belum_lunas", label: `Belum Lunas (${summary.unpaid})` },
+    { k: "lunas", label: `Lunas (${summary.paid})` },
   ] as const;
 
   return (
-    <section className="space-y-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="font-semibold">B. Riwayat Invoice Terbit</h2>
-          {unpaid.length > 0 && (
-            <p className="text-xs text-muted-foreground">
-              Piutang: <b className="text-red-700">{rupiah(unpaid.reduce((a, i) => a + i.total, 0))}</b> dari {unpaid.length} invoice
-            </p>
-          )}
-        </div>
+    <section className="space-y-4">
+      <SectionHeader
+        title="B. Riwayat Invoice Terbit"
+        desc={
+          summary.unpaid > 0 ? (
+            <>
+              Piutang: <b className="text-red-700">{rupiah(summary.unpaidTotal)}</b> dari {summary.unpaid} invoice
+            </>
+          ) : undefined
+        }
+      />
+      <Toolbar>
+        <ServerSearch placeholder="Cari no. invoice, siswa, atau program..." />
         <div className="flex gap-1 rounded-lg bg-muted p-1">
           {tabs.map((t) => (
             <button
               key={t.k}
-              onClick={() => setFilter(t.k)}
-              className={cn("rounded-md px-3 py-1 text-xs font-medium", filter === t.k ? "bg-background shadow-sm" : "text-muted-foreground")}
+              disabled={pending}
+              onClick={() => set({ status: t.k || null, page: null })}
+              className={cn(
+                "h-7 rounded-md px-3 text-xs font-medium whitespace-nowrap",
+                status === t.k ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
             >
               {t.label}
             </button>
           ))}
         </div>
-      </div>
-      {rows.length === 0 ? (
-        <EmptyState title="Belum ada invoice" />
+      </Toolbar>
+      {invoices.length === 0 ? (
+        <EmptyState title="Tidak ada invoice" desc="Belum ada invoice, atau tidak cocok dengan pencarian/filter." />
       ) : (
         <DataTable head={["No. Invoice", "Tgl Terbit", "Siswa & Kelas", "Rincian", "Total", "Status Bayar", "File Nota"]}>
-          {rows.map((inv) => (
+          {invoices.map((inv) => (
             <tr key={inv.id}>
-              <Td className="font-semibold whitespace-nowrap">{inv.nomor}</Td>
+              <Td className="font-medium whitespace-nowrap">{inv.nomor}</Td>
               <Td className="whitespace-nowrap">{tanggal(inv.tgl_terbit, false)}</Td>
               <Td><b>{inv.students?.nama}</b> ({inv.students?.kelas?.replace("Kelas ", "")})</Td>
               <Td>{inv.jumlah_sesi}x {inv.programs?.nama}</Td>
-              <Td className="font-semibold tabular-nums">{rupiah(inv.total)}</Td>
+              <Td className="font-medium tabular-nums">{rupiah(inv.total)}</Td>
               <Td>
                 {inv.status_bayar === "lunas" ? (
                   <div className="space-y-1">
@@ -234,10 +257,10 @@ export function InvoiceHistory({ invoices }: { invoices: InvoiceRow[] }) {
                     </button>
                   </div>
                 ) : (
-                  <div className="space-y-1.5">
+                  <div className="flex flex-col items-start gap-1.5">
                     <Pill color="red">Belum Lunas</Pill>
-                    <Button size="xs" className="block bg-emerald-600 hover:bg-emerald-700" onClick={() => setPaying(inv)}>
-                      <span className="flex items-center gap-1"><BadgeCheck className="size-3" /> Tandai Lunas</span>
+                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setPaying(inv)}>
+                      <BadgeCheck /> Tandai Lunas
                     </Button>
                   </div>
                 )}
@@ -260,6 +283,7 @@ export function InvoiceHistory({ invoices }: { invoices: InvoiceRow[] }) {
           ))}
         </DataTable>
       )}
+      <ServerPager total={total} page={page} />
       {paying && <PaymentDialog inv={paying} onClose={() => setPaying(null)} />}
     </section>
   );

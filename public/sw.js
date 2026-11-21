@@ -1,6 +1,6 @@
 // Service worker sederhana: app shell + halaman fallback offline.
 // Data (Supabase) selalu lewat jaringan; tidak ada cache data sensitif.
-const CACHE = "bimbel-shell-v1";
+const CACHE = "bimbel-shell-v2";
 const OFFLINE_URL = "/offline";
 const PRECACHE = [OFFLINE_URL, "/icons/icon-192.png", "/icons/icon-512.png"];
 

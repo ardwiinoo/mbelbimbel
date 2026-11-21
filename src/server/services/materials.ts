@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db, type Tx } from "@/db";
 import { auditLog, files, materials } from "@/db/schema";
 import { assertActive, assertAdmin, UserError, type Actor } from "../authz";
-import { withUploadedFile } from "../files";
+import { detachFileRow, purgeStoredFiles, withUploadedFile } from "../files";
 
 export type MaterialRow = {
   id: string;
@@ -55,23 +55,29 @@ export async function saveMaterial(actor: Actor | null, input: z.input<typeof me
   const hasFile = !!input.file && input.file.size > 0;
   if (!id && !hasFile) throw new UserError("Pilih file materi");
 
-  const write = async (tx: Tx, fileId?: string) => {
+  /** Tulis materi; bila file diganti, kembalikan storage key file lama untuk dihapus. */
+  const write = async (tx: Tx, fileId?: string): Promise<string | null> => {
     if (id) {
-      const r = await tx
+      const [cur] = await tx
+        .select({ fileId: materials.fileId })
+        .from(materials)
+        .where(and(eq(materials.id, id), isNull(materials.deletedAt)))
+        .for("update");
+      if (!cur) throw new UserError("Materi tidak ditemukan");
+      await tx
         .update(materials)
         .set({ ...meta, ...(fileId ? { fileId } : {}), updatedAt: new Date() })
-        .where(and(eq(materials.id, id), isNull(materials.deletedAt)))
-        .returning({ id: materials.id });
-      if (!r.length) throw new UserError("Materi tidak ditemukan");
-    } else {
-      await tx.insert(materials).values({ ...meta, fileId: fileId!, uploadedBy: actor.id });
+        .where(eq(materials.id, id));
+      return fileId ? detachFileRow(tx, cur.fileId) : null;
     }
+    await tx.insert(materials).values({ ...meta, fileId: fileId!, uploadedBy: actor.id });
+    return null;
   };
 
-  // File lama tidak dihapus saat diganti (retensi: simpan selamanya).
-  if (hasFile) await withUploadedFile("material", input.file, actor, write);
-  else await db().transaction((tx) => write(tx));
-  return "Materi disimpan";
+  // File diganti → file lama dihapus setelah transaksi sukses (tidak menumpuk).
+  const oldKey = hasFile ? await withUploadedFile("material", input.file, actor, write) : await db().transaction((tx) => write(tx));
+  await purgeStoredFiles([oldKey]);
+  return hasFile && id ? "Materi disimpan (file lama dihapus)" : "Materi disimpan";
 }
 
 export async function softDeleteMaterial(actor: Actor | null, id: string) {

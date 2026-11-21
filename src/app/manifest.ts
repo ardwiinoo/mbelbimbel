@@ -2,6 +2,7 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
+    id: "/",
     name: "Bimbel App — Manajemen & Invoice",
     short_name: "Bimbel",
     description: "Data siswa, jadwal & absen foto, laporan, materi, dan invoice bimbel",

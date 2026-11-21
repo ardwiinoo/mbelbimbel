@@ -2,10 +2,11 @@
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Search, Pencil, Trash2, MessageCircle, FileText, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, MessageCircle, FileText, Loader2 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DataTable, Td, EmptyState, selectClass } from "@/components/app/ui";
+import { DataTable, Td, EmptyState } from "@/components/app/ui";
+import { Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
 import { FileLinks } from "@/components/app/file-link";
 import { FormDialog, Field } from "@/components/app/form-dialog";
 import { postForm } from "@/lib/post-form";
@@ -13,18 +14,19 @@ import type { MaterialRow } from "@/server/services/materials";
 import { tanggal, waLink } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { softDeleteMaterial } from "./actions";
+import { AppSelect } from "@/components/app/app-select";
 
 export type { MaterialRow };
 
 const ACCEPT = ".pdf,.png,.jpg,.jpeg,.doc,.docx,.ppt,.pptx,.xls,.xlsx";
 const MAX = 25 * 1024 * 1024;
 const previewable = (mime: string | null) => !!mime && (mime === "application/pdf" || mime.startsWith("image/"));
+const materialSearchText = (m: MaterialRow) => `${m.judul} ${m.kategori} ${m.jenjang} ${m.file_name}`;
 const sizeLabel = (n: number | null) => (n ? (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`) : "");
 
 export function MaterialsView({ isAdmin, tutorName, waAdmin, materials }: {
   isAdmin: boolean; tutorName: string; waAdmin: string | null; materials: MaterialRow[];
 }) {
-  const [q, setQ] = useState("");
   const [kat, setKat] = useState("");
   const [jen, setJen] = useState("");
   const [editing, setEditing] = useState<MaterialRow | "new" | null>(null);
@@ -32,46 +34,39 @@ export function MaterialsView({ isAdmin, tutorName, waAdmin, materials }: {
 
   const kategoriList = [...new Set(materials.map((m) => m.kategori))].sort();
   const jenjangList = [...new Set(materials.map((m) => m.jenjang))].sort();
-  const rows = useMemo(() => materials.filter((m) =>
-    (!q || m.judul.toLowerCase().includes(q.toLowerCase())) && (!kat || m.kategori === kat) && (!jen || m.jenjang === jen),
-  ), [materials, q, kat, jen]);
+  const byFilter = useMemo(() => materials.filter((m) => (!kat || m.kategori === kat) && (!jen || m.jenjang === jen)), [materials, kat, jen]);
+  const list = useClientList(byFilter, materialSearchText);
+  const rows = list.rows;
 
   const usulanText = `Halo Admin, saya ${tutorName} ingin mengusulkan materi untuk Bank Materi:\n\nJudul: \nKategori/Jenjang: \n\n(file saya lampirkan di chat ini)`;
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-2 md:flex-row">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Cari judul materi..." value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" />
-        </div>
-        <div className="grid grid-cols-2 gap-2 md:flex">
-          <select className={selectClass} value={kat} onChange={(e) => setKat(e.target.value)}>
-            <option value="">Semua kategori</option>
-            {kategoriList.map((k) => <option key={k}>{k}</option>)}
-          </select>
-          <select className={selectClass} value={jen} onChange={(e) => setJen(e.target.value)}>
-            <option value="">Semua jenjang</option>
-            {jenjangList.map((k) => <option key={k}>{k}</option>)}
-          </select>
+      <Toolbar>
+        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari judul, kategori, jenjang, atau nama file..." />
+        <div className="grid grid-cols-2 gap-2 sm:flex [&>select]:sm:w-40">
+          <AppSelect className="sm:w-40" value={kat} onChange={setKat} aria-label="Kategori"
+            options={[{ value: "", label: "Semua kategori" }, ...kategoriList.map((k) => ({ value: k, label: k }))]} />
+          <AppSelect className="sm:w-40" value={jen} onChange={setJen} aria-label="Jenjang"
+            options={[{ value: "", label: "Semua jenjang" }, ...jenjangList.map((k) => ({ value: k, label: k }))]} />
         </div>
         {isAdmin ? (
-          <Button className="h-9" onClick={() => setEditing("new")}><Plus /> Upload Modul</Button>
+          <Button onClick={() => setEditing("new")}><Plus /> Upload Modul</Button>
         ) : (
           <a
             href={waAdmin ? waLink(waAdmin, usulanText) : "#"}
             target="_blank"
             rel="noopener"
             onClick={(e) => { if (!waAdmin) { e.preventDefault(); toast.error("Nomor WA admin belum diatur"); } }}
-            className={cn(buttonVariants(), "h-9 bg-emerald-600 hover:bg-emerald-700")}
+            className={cn(buttonVariants(), "bg-emerald-600 hover:bg-emerald-700")}
           >
             <MessageCircle /> Kirim Usulan Materi via WA Admin
           </a>
         )}
-      </div>
+      </Toolbar>
 
-      {rows.length === 0 ? (
-        <EmptyState title="Belum ada materi" />
+      {list.total === 0 ? (
+        <EmptyState title={materials.length ? "Tidak ditemukan" : "Belum ada materi"} />
       ) : (
         <>
           <div className="hidden md:block">
@@ -119,6 +114,7 @@ export function MaterialsView({ isAdmin, tutorName, waAdmin, materials }: {
           </div>
         </>
       )}
+      <Pager page={list.page} pages={list.pages} total={list.total} pageSize={list.pageSize} onPage={list.setPage} />
       {isAdmin && editing && <MaterialDialog m={editing === "new" ? null : editing} onClose={() => setEditing(null)} />}
     </div>
   );

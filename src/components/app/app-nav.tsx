@@ -3,12 +3,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
-  Home, Users, Briefcase, CalendarCheck, FileText, BookOpen, Receipt, Settings, ShieldCheck, MoreHorizontal, LogOut, GraduationCap,
+  Home, Users, Briefcase, CalendarCheck, FileText, BookOpen, Receipt, Settings, ShieldCheck, MoreHorizontal, LogOut, GraduationCap, UserCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NAV } from "./nav-config";
 import { isAdminRole, isSuperAdmin, ROLE_LABEL, type Role } from "@/lib/roles";
 import { signOut } from "@/app/login/actions";
+import { InstallNavButton } from "./install-app";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
 const ICONS = {
@@ -36,7 +37,7 @@ export function Sidebar({ role, nama, namaBimbel }: Props) {
   const path = usePathname();
   const items = useItems(role);
   return (
-    <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r bg-sidebar md:flex">
+    <aside className="glass sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r md:flex">
       <div className="flex items-center gap-2 px-4 py-5">
         <div className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
           <GraduationCap className="size-5" />
@@ -61,10 +62,20 @@ export function Sidebar({ role, nama, namaBimbel }: Props) {
           </Link>
         ))}
       </nav>
-      <div className="border-t p-3">
-        <p className="truncate px-1 text-sm font-medium">{nama}</p>
+      <div className="space-y-0.5 border-t p-2">
+        <InstallNavButton className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10" />
+        <Link
+          href="/profil"
+          className={cn(
+            "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium hover:bg-muted",
+            isActive(path, "/profil") && "bg-primary/10 text-primary",
+          )}
+        >
+          <UserCircle className="size-4" />
+          <span className="truncate">{nama}</span>
+        </Link>
         <form action={signOut}>
-          <button className="mt-1 flex w-full items-center gap-2 rounded-lg px-1 py-1.5 text-sm text-muted-foreground hover:text-destructive">
+          <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-destructive">
             <LogOut className="size-4" /> Keluar
           </button>
         </form>
@@ -84,7 +95,7 @@ export function BottomNav({ role, nama }: Props) {
 
   return (
     <>
-      <nav className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur md:hidden">
+      <nav className="glass pb-safe fixed inset-x-0 bottom-0 z-40 border-t md:hidden">
         <div className="grid grid-cols-5">
           {primary.map(({ href, label, Icon }) => (
             <Link
@@ -125,6 +136,14 @@ export function BottomNav({ role, nama }: Props) {
                 {label}
               </Link>
             ))}
+            <Link
+              href="/profil"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium hover:bg-muted"
+            >
+              <UserCircle className="size-5 text-muted-foreground" /> Profil Saya
+            </Link>
+            <InstallNavButton className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium text-primary hover:bg-muted" />
             <form action={signOut}>
               <button className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium text-destructive hover:bg-muted">
                 <LogOut className="size-5" /> Keluar

@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { auditLog, files, programs, studentAssessments, studentPrograms, students, users } from "@/db/schema";
 import { isAdminRole } from "@/lib/roles";
 import { assertActive, assertAdmin, UserError, type Actor } from "../authz";
-import { withUploadedFile } from "../files";
+import { detachFileRow, purgeStoredFiles, withUploadedFile } from "../files";
 
 export type StudentRow = {
   id: string;
@@ -183,13 +183,25 @@ export async function softDeleteStudent(actor: Actor | null, id: string) {
   return "Siswa dihapus (soft delete)";
 }
 
-/** Upload dokumen asesmen ABK — khusus admin (pengganti RLS + Storage policy "assessments"). */
+/**
+ * Upload / ganti dokumen asesmen ABK — khusus admin (pengganti RLS + Storage policy "assessments").
+ * Satu siswa = satu dokumen aktif: dokumen lama dihapus (DB + disk) saat diganti.
+ */
 export async function addAssessment(actor: Actor | null, studentId: string, file: File | null) {
   assertAdmin(actor);
+  if (!/^[0-9a-f-]{36}$/i.test(studentId)) throw new UserError("Siswa tidak ditemukan");
   const [s] = await db().select({ id: students.id }).from(students).where(and(eq(students.id, studentId), isNull(students.deletedAt))).limit(1);
   if (!s) throw new UserError("Siswa tidak ditemukan");
-  await withUploadedFile("assessment", file, actor, async (tx, fileId) => {
+  const oldKeys = await withUploadedFile("assessment", file, actor, async (tx, fileId) => {
+    const old = await tx
+      .delete(studentAssessments)
+      .where(eq(studentAssessments.studentId, studentId))
+      .returning({ fileId: studentAssessments.fileId });
     await tx.insert(studentAssessments).values({ studentId, fileId, uploadedBy: actor.id });
+    const keys: (string | null)[] = [];
+    for (const o of old) keys.push(await detachFileRow(tx, o.fileId));
+    return keys;
   });
-  return "Dokumen asesmen diunggah";
+  await purgeStoredFiles(oldKeys);
+  return oldKeys.length ? "Dokumen asesmen diganti (file lama dihapus)" : "Dokumen asesmen diunggah";
 }

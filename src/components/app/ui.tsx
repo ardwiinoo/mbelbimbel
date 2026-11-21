@@ -71,4 +71,17 @@ export function Td({ children, className }: { children?: ReactNode; className?: 
 }
 
 export const selectClass =
-  "h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50";
+  "select-native h-9 w-full min-w-0 cursor-pointer rounded-lg border border-input bg-background pl-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm";
+
+/** Judul bagian di dalam halaman (mis. "A. Data Tentor"), ukuran & spasi seragam. */
+export function SectionHeader({ title, desc, actions }: { title: string; desc?: ReactNode; actions?: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <h2 className="text-base font-semibold">{title}</h2>
+        {desc && <div className="mt-0.5 text-sm text-muted-foreground">{desc}</div>}
+      </div>
+      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+    </div>
+  );
+}

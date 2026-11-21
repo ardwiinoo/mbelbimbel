@@ -3,13 +3,14 @@ import { useActionState } from "react";
 import { signIn } from "./actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 
 export function LoginForm() {
   const [state, action, pending] = useActionState(signIn, null);
   return (
-    <Card>
+    <Card className="bg-white/65 shadow-xl shadow-primary/5 backdrop-blur-xl backdrop-saturate-150">
       <CardContent>
         <form action={action} className="space-y-4">
           <div className="space-y-1.5">
@@ -18,7 +19,7 @@ export function LoginForm() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="password">Password</Label>
-            <Input id="password" name="password" type="password" autoComplete="current-password" required className="h-11" />
+            <PasswordInput id="password" name="password" autoComplete="current-password" required className="h-11" />
           </div>
           {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
           <Button type="submit" className="h-11 w-full" disabled={pending}>

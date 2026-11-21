@@ -77,3 +77,22 @@ export async function findReadableFile(actor: Actor, fileId: string): Promise<Fi
   }
   return rows.length ? f : null;
 }
+
+/**
+ * Hapus metadata file lama DI DALAM transaksi (panggil setelah baris pemakainya
+ * sudah tidak merujuk file ini). Mengembalikan storage key untuk dihapus dari
+ * disk SETELAH commit lewat purgeStoredFiles().
+ */
+export async function detachFileRow(tx: Tx, fileId: string | null | undefined): Promise<string | null> {
+  if (!fileId) return null;
+  const [row] = await tx.delete(files).where(eq(files.id, fileId)).returning({ key: files.storageKey });
+  return row?.key ?? null;
+}
+
+/** Hapus file fisik setelah transaksi sukses. Gagal hapus tidak menggagalkan request (hanya dicatat). */
+export async function purgeStoredFiles(keys: (string | null | undefined)[]) {
+  for (const key of keys) {
+    if (!key) continue;
+    await deleteFile(key).catch((e) => console.error("[storage] gagal hapus file lama", key, e));
+  }
+}

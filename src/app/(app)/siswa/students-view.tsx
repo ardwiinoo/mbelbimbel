@@ -2,20 +2,24 @@
 import { useMemo, useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Search, Pencil, Trash2, MessageCircle, Upload, Lock } from "lucide-react";
+import { Plus, Pencil, Trash2, MessageCircle, Upload, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { DataTable, Td, Pill, EmptyState, selectClass } from "@/components/app/ui";
+import { DataTable, Td, Pill, EmptyState } from "@/components/app/ui";
+import { Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
 import { FileLinks } from "@/components/app/file-link";
 import { umur, waLink, KATEGORI_LABEL, tanggal } from "@/lib/format";
 import { postForm } from "@/lib/post-form";
 import type { StudentRow } from "@/server/services/students";
 import { StudentDialog } from "./student-dialog";
 import { softDeleteStudent } from "./actions";
+import { AppSelect } from "@/components/app/app-select";
 
 export type { StudentRow };
 
 type Opt = { id: string; nama: string };
+
+const searchText = (s: StudentRow) =>
+  [s.nama, s.kelas, s.sekolah, s.alamat, s.ortu_nama, s.ortu_wa, ...s.student_programs.map((p) => `${p.programs?.nama} ${p.profiles?.nama ?? ""}`)].join(" ");
 
 export function StudentsView({
   isAdmin,
@@ -28,23 +32,24 @@ export function StudentsView({
   programs: (Opt & { kategori: string })[];
   tutors: Opt[];
 }) {
-  const [q, setQ] = useState("");
   const [fProgram, setFProgram] = useState("");
   const [fStatus, setFStatus] = useState("aktif");
   const [fTutor, setFTutor] = useState("");
   const [editing, setEditing] = useState<StudentRow | null | "new">(null);
 
-  const rows = useMemo(
+  const filtered = useMemo(
     () =>
       students.filter(
         (s) =>
-          (!q || s.nama.toLowerCase().includes(q.toLowerCase())) &&
           (!fStatus || s.status === fStatus) &&
           (!fProgram || s.student_programs.some((p) => p.program_id === fProgram)) &&
           (!fTutor || s.student_programs.some((p) => p.tutor_id === fTutor)),
       ),
-    [students, q, fProgram, fStatus, fTutor],
+    [students, fProgram, fStatus, fTutor],
   );
+  // Cari di nama, kelas, sekolah, orang tua, WA, dan program
+  const list = useClientList(filtered, searchText);
+  const rows = list.rows;
 
   const statusPill = (s: StudentRow) => (
     <Pill color={s.status === "aktif" ? "green" : "gray"}>{s.status === "aktif" ? "Aktif" : "Nonaktif"}</Pill>
@@ -52,38 +57,24 @@ export function StudentsView({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-2 md:flex-row md:items-center">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Cari nama siswa..." value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" />
-        </div>
+      <Toolbar>
+        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari siswa, kelas, sekolah, orang tua, atau program..." />
         {isAdmin && (
-          <div className="grid grid-cols-3 gap-2 md:flex">
-            <select className={selectClass} value={fProgram} onChange={(e) => setFProgram(e.target.value)}>
-              <option value="">Semua program</option>
-              {programs.map((p) => (
-                <option key={p.id} value={p.id}>{p.nama}</option>
-              ))}
-            </select>
-            <select className={selectClass} value={fTutor} onChange={(e) => setFTutor(e.target.value)}>
-              <option value="">Semua tentor</option>
-              {tutors.map((t) => (
-                <option key={t.id} value={t.id}>{t.nama}</option>
-              ))}
-            </select>
-            <select className={selectClass} value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
-              <option value="">Semua status</option>
-              <option value="aktif">Aktif</option>
-              <option value="nonaktif">Nonaktif</option>
-            </select>
+          <div className="grid grid-cols-3 gap-2 sm:flex [&>select]:sm:w-40">
+            <AppSelect className="sm:w-40" value={fProgram} onChange={setFProgram} aria-label="Program"
+              options={[{ value: "", label: "Semua program" }, ...programs.map((p) => ({ value: p.id, label: p.nama }))]} />
+            <AppSelect className="sm:w-40" value={fTutor} onChange={setFTutor} aria-label="Tentor"
+              options={[{ value: "", label: "Semua tentor" }, ...tutors.map((t) => ({ value: t.id, label: t.nama }))]} />
+            <AppSelect className="sm:w-40" value={fStatus} onChange={setFStatus} aria-label="Status"
+              options={[{ value: "", label: "Semua status" }, ...[{ value: "aktif", label: "Aktif" }, { value: "nonaktif", label: "Nonaktif" }]]} />
           </div>
         )}
         {isAdmin && (
-          <Button onClick={() => setEditing("new")} className="h-9">
+          <Button onClick={() => setEditing("new")}>
             <Plus /> Tambah Siswa
           </Button>
         )}
-      </div>
+      </Toolbar>
 
       {rows.length === 0 ? (
         <EmptyState
@@ -134,6 +125,7 @@ export function StudentsView({
           </div>
         </>
       )}
+      <Pager page={list.page} pages={list.pages} total={list.total} pageSize={list.pageSize} onPage={list.setPage} />
 
       {isAdmin && editing && (
         <StudentDialog
@@ -243,8 +235,8 @@ function AssessmentCell({ s }: { s: StudentRow }) {
         hidden
         onChange={(e) => onFile(e.target.files?.[0])}
       />
-      <Button size="xs" variant="ghost" disabled={busy} onClick={() => inputRef.current?.click()}>
-        <Upload /> {busy ? "Mengunggah..." : latest ? "Ganti" : "Upload"}
+      <Button size="sm" variant={latest ? "ghost" : "outline"} disabled={busy} onClick={() => inputRef.current?.click()}>
+        <Upload /> {busy ? "Mengunggah..." : latest ? "Ganti file" : "Upload asesmen"}
       </Button>
     </div>
   );
