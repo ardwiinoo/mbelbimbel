@@ -1,0 +1,16 @@
+# Postgres untuk development lokal saja (bukan untuk VPS).
+# Jalankan: pnpm db:up   |   Hentikan: pnpm db:down
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: bimbel-postgres-dev
+    environment:
+      POSTGRES_USER: bimbel
+      POSTGRES_PASSWORD: bimbel
+      POSTGRES_DB: bimbel
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:

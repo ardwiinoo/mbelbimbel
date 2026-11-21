@@ -1,0 +1,27 @@
+# Taruh file ini di VPS: /srv/NAMA_APP/docker-compose.yml
+# (BUKAN di dalam image; file .env di folder yang sama menyimpan rahasia)
+#
+# .env di VPS berisi minimal:
+#   APP_NAME=nama-app
+#   APP_PORT=3001                      # unik per aplikasi (3001, 3002, ...)
+#   IMAGE=ghcr.io/owner/repo           # huruf kecil semua, tanpa tag
+#   DATABASE_URL=postgresql://user:pass@postgres:5432/dbname
+#   ...rahasia lain milik aplikasi
+
+services:
+  web:
+    image: ${IMAGE}:${IMAGE_TAG:-latest}
+    container_name: ${APP_NAME}
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:${APP_PORT}:3000"
+    volumes:
+      - /srv/files/${APP_NAME}:/app/uploads
+    networks:
+      - appnet
+    mem_limit: 512m
+
+networks:
+  appnet:
+    external: true
