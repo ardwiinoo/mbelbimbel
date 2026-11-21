@@ -213,6 +213,9 @@ export const progressReports = pgTable(
     periode: text("periode"),
     catatan: text("catatan"),
     uploadedAt: ts("uploaded_at").notNull().defaultNow(),
+    /** Diisi saat laporan diedit (ganti file/periode). File lama tetap disimpan. */
+    updatedAt: ts("updated_at"),
+    updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
     deletedAt: ts("deleted_at"),
   },
   (t) => [index("progress_reports_tutor_idx").on(t.tutorId)],

@@ -1,60 +1,60 @@
 "use client";
 import { useMemo, useState, useTransition } from "react";
-import { useForm, useWatch } from "react-hook-form";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
-import { Plus, Pencil, KeyRound, Search } from "lucide-react";
+import { Plus, Pencil, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DataTable, Td, Pill, EmptyState, selectClass } from "@/components/app/ui";
+import { DataTable, Td, Pill, EmptyState } from "@/components/app/ui";
+import { Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
+import { PasswordInput } from "@/components/ui/password-input";
 import { FormDialog, Field } from "@/components/app/form-dialog";
 import { ROLE_LABEL, type Role } from "@/lib/roles";
 import { tanggal } from "@/lib/format";
 import { createUser, updateUser, resetPassword } from "./actions";
+import { AppSelect } from "@/components/app/app-select";
 
 export type UserRow = {
   id: string; email: string | null; nama: string; no_wa: string | null; role: Role;
   spesialisasi: string | null; status: "aktif" | "nonaktif"; created_at: string;
 };
 
+const userSearchText = (u: UserRow) => `${u.nama} ${u.email ?? ""} ${u.no_wa ?? ""} ${u.spesialisasi ?? ""} ${ROLE_LABEL[u.role]}`;
+
+/** Password acak mudah diketik (tanpa karakter mirip: 0/O, 1/l). */
+function randomPassword() {
+  const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const buf = new Uint32Array(10);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (n) => chars[n % chars.length]).join("");
+}
+
 const ROLE_COLOR = { super_admin: "red", admin: "blue", tentor: "gray" } as const;
 
 export function UsersView({ users, meId }: { users: UserRow[]; meId: string }) {
-  const [q, setQ] = useState("");
   const [fRole, setFRole] = useState("");
   const [editing, setEditing] = useState<UserRow | "new" | null>(null);
   const [resetting, setResetting] = useState<UserRow | null>(null);
 
-  const rows = useMemo(
-    () =>
-      users.filter(
-        (u) =>
-          (!fRole || u.role === fRole) &&
-          (!q || `${u.nama} ${u.email}`.toLowerCase().includes(q.toLowerCase())),
-      ),
-    [users, q, fRole],
-  );
+  const byRole = useMemo(() => users.filter((u) => !fRole || u.role === fRole), [users, fRole]);
+  const list = useClientList(byRole, userSearchText);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-2 md:flex-row">
-        <div className="relative flex-1">
-          <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Cari nama atau email..." value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" />
-        </div>
-        <select className={`${selectClass} md:w-44`} value={fRole} onChange={(e) => setFRole(e.target.value)}>
-          <option value="">Semua peran</option>
-          {Object.entries(ROLE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
-        <Button className="h-9" onClick={() => setEditing("new")}><Plus /> Buat Akun</Button>
-      </div>
+      <Toolbar>
+        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari nama, email, WA, atau mapel..." />
+        <AppSelect className="sm:w-44" value={fRole} onChange={setFRole} aria-label="Peran"
+          options={[{ value: "", label: "Semua peran" }, ...Object.entries(ROLE_LABEL).map(([k, v]) => ({ value: k, label: v }))]} />
+        <Button onClick={() => setEditing("new")}><Plus /> Buat Akun</Button>
+      </Toolbar>
 
-      {rows.length === 0 ? (
+      {list.total === 0 ? (
         <EmptyState title="Tidak ada pengguna" />
       ) : (
         <DataTable head={["Nama", "Email login", "Peran", "Spesialisasi / WA", "Status", "Dibuat", ""]}>
-          {rows.map((u) => (
+          {list.rows.map((u) => (
             <tr key={u.id}>
-              <Td className="font-semibold">{u.nama}{u.id === meId && <span className="ml-1 text-xs font-normal text-muted-foreground">(Anda)</span>}</Td>
+              <Td className="font-medium">{u.nama}{u.id === meId && <span className="ml-1 text-xs font-normal text-muted-foreground">(Anda)</span>}</Td>
               <Td className="text-muted-foreground">{u.email}</Td>
               <Td><Pill color={ROLE_COLOR[u.role]}>{ROLE_LABEL[u.role]}</Pill></Td>
               <Td>
@@ -66,13 +66,14 @@ export function UsersView({ users, meId }: { users: UserRow[]; meId: string }) {
               <Td>
                 <div className="flex gap-1">
                   <Button size="sm" variant="outline" onClick={() => setEditing(u)}><Pencil /> Ubah</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setResetting(u)}><KeyRound /> Reset</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setResetting(u)}><KeyRound /> Reset password</Button>
                 </div>
               </Td>
             </tr>
           ))}
         </DataTable>
       )}
+      <Pager page={list.page} pages={list.pages} total={list.total} pageSize={list.pageSize} onPage={list.setPage} />
 
       {editing && <UserDialog user={editing === "new" ? null : editing} isMe={editing !== "new" && editing.id === meId} onClose={() => setEditing(null)} />}
       {resetting && <ResetDialog user={resetting} onClose={() => setResetting(null)} />}
@@ -116,22 +117,19 @@ function UserDialog({ user, isMe, onClose }: { user: UserRow | null; isMe: boole
         {!user && (
           <>
             <Field label="Email login *"><Input type="email" {...register("email")} /></Field>
-            <Field label="Password awal *" hint="Minimal 8 karakter"><Input type="text" {...register("password")} /></Field>
+            <Field label="Password awal *" hint="Minimal 8 karakter"><PasswordInput autoComplete="new-password" defaultVisible {...register("password")} /></Field>
           </>
         )}
         <Field label="Peran" hint={role === "super_admin" ? "Kontrol penuh, termasuk kelola akun." : role === "admin" ? "Operasional: siswa, jadwal, invoice, materi." : "Hanya siswa & jadwal miliknya."}>
-          <select className={selectClass} {...register("role")}>
-            <option value="tentor">Tentor</option>
-            <option value="admin">Admin</option>
-            <option value="super_admin">Super Admin</option>
-          </select>
+          <Controller control={control} name="role" render={({ field }) => (
+            <AppSelect value={field.value} onChange={field.onChange} options={[{ value: "tentor", label: "Tentor" }, { value: "admin", label: "Admin" }, { value: "super_admin", label: "Super Admin" }]} />
+          )} />
         </Field>
         {user && (
           <Field label="Status" hint={isMe ? "Hati-hati mengubah akun Anda sendiri." : "Nonaktif = tidak bisa login."}>
-            <select className={selectClass} {...register("status")}>
-              <option value="aktif">Aktif</option>
-              <option value="nonaktif">Nonaktif</option>
-            </select>
+            <Controller control={control} name="status" render={({ field }) => (
+              <AppSelect value={field.value} onChange={field.onChange} options={[{ value: "aktif", label: "Aktif" }, { value: "nonaktif", label: "Nonaktif" }]} />
+            )} />
           </Field>
         )}
         <Field label="No. WhatsApp"><Input inputMode="tel" {...register("no_wa")} /></Field>
@@ -151,12 +149,29 @@ function ResetDialog({ user, onClose }: { user: UserRow; onClose: () => void }) 
   const [pw, setPw] = useState("");
   const [pending, start] = useTransition();
   return (
-    <FormDialog title={`Reset password ${user.nama}`} desc={user.email ?? undefined} onClose={onClose}>
-      <Field label="Password baru" hint="Minimal 8 karakter."><Input value={pw} onChange={(e) => setPw(e.target.value)} /></Field>
+    <FormDialog
+      title={`Reset password ${user.nama}`}
+      desc={`${user.email ?? ""} — untuk akun yang lupa password. Semua perangkat akun ini otomatis keluar.`}
+      onClose={onClose}
+    >
+      <Field label="Password baru" hint="Minimal 8 karakter. Berikan ke pemilik akun, minta ganti di menu Profil setelah login.">
+        <div className="flex gap-2">
+          <div className="min-w-0 flex-1"><PasswordInput value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="new-password" defaultVisible className="font-mono" /></div>
+          <Button type="button" variant="outline" onClick={() => setPw(randomPassword())}>Buat acak</Button>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={!pw}
+            onClick={() => navigator.clipboard?.writeText(pw).then(() => toast.success("Password disalin"), () => {})}
+          >
+            Salin
+          </Button>
+        </div>
+      </Field>
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onClose}>Batal</Button>
         <Button
-          disabled={pending}
+          disabled={pending || pw.length < 8}
           onClick={() => start(async () => {
             const r = await resetPassword(user.id, pw);
             if (r.ok) { toast.success(r.message); onClose(); } else toast.error(r.error);

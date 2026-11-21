@@ -18,7 +18,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const { reason } = await searchParams;
   const msg = typeof reason === "string" ? REASON[reason] : undefined;
   return (
-    <main className="flex flex-1 items-center justify-center bg-gradient-to-b from-primary/10 to-background p-4">
+    <main className="flex flex-1 items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="flex flex-col items-center gap-2 text-center">
           <div className="flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg">

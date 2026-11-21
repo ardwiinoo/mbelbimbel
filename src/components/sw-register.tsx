@@ -1,5 +1,9 @@
 "use client";
 import { useEffect } from "react";
+import { startInstallListener } from "@/lib/pwa-install";
+
+// Tangkap beforeinstallprompt sedini mungkin (sebelum komponen lain dirender).
+if (typeof window !== "undefined") startInstallListener();
 
 export function SwRegister() {
   useEffect(() => {

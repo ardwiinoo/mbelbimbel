@@ -1,15 +1,17 @@
 "use client";
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { Plus, Pencil, MessageCircle, ShieldCheck } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DataTable, Td, Pill, EmptyState, selectClass } from "@/components/app/ui";
+import { DataTable, Td, Pill, EmptyState, SectionHeader } from "@/components/app/ui";
+import { Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
 import { FormDialog, Field } from "@/components/app/form-dialog";
 import { rupiah, waLink, KATEGORI_LABEL } from "@/lib/format";
 import { saveTutor, saveProgram } from "./actions";
+import { AppSelect } from "@/components/app/app-select";
 
 export type TutorRow = {
   id: string; nama: string; email: string | null; no_wa: string | null; spesialisasi: string | null; status: "aktif" | "nonaktif";
@@ -18,17 +20,9 @@ export type ProgramRow = {
   id: string; nama: string; kategori: "privat" | "kelompok" | "abk"; jenjang: string; tarif_per_pertemuan: number; aktif: boolean;
 };
 
-function SectionTitle({ title, action }: { title: string; action: React.ReactNode }) {
-  return (
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <h2 className="font-semibold">{title}</h2>
-      {action}
-    </div>
-  );
-}
-
 export function TutorsTable({ tutors, isSuper }: { tutors: TutorRow[]; isSuper: boolean }) {
   const [editing, setEditing] = useState<TutorRow | null>(null);
+  const list = useClientList(tutors, (t) => `${t.nama} ${t.spesialisasi ?? ""} ${t.no_wa ?? ""} ${t.email ?? ""}`);
   const action = isSuper ? (
     <Link href="/pengguna" className={buttonVariants({ size: "sm" })}>
       <ShieldCheck /> Buat / kelola akun tentor
@@ -37,15 +31,18 @@ export function TutorsTable({ tutors, isSuper }: { tutors: TutorRow[]; isSuper: 
     <p className="text-xs text-muted-foreground">Akun tentor baru, status, & reset password dikelola Super Admin.</p>
   );
   return (
-    <section>
-      <SectionTitle title="A. Data Tentor" action={action} />
-      {tutors.length === 0 ? (
-        <EmptyState title="Belum ada tentor" />
+    <section className="space-y-4">
+      <SectionHeader title="A. Data Tentor" actions={action} />
+      <Toolbar>
+        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari nama, mapel, WA, atau email tentor..." />
+      </Toolbar>
+      {list.total === 0 ? (
+        <EmptyState title={tutors.length ? "Tidak ditemukan" : "Belum ada tentor"} />
       ) : (
         <DataTable head={["Nama Tentor", "Spesialisasi / Mapel", "No. WhatsApp", "Akun Login", "Status", ""]}>
-          {tutors.map((t) => (
+          {list.rows.map((t) => (
             <tr key={t.id}>
-              <Td className="font-semibold">{t.nama}</Td>
+              <Td className="font-medium">{t.nama}</Td>
               <Td>{t.spesialisasi ?? "-"}</Td>
               <Td>
                 {t.no_wa ? (
@@ -61,6 +58,7 @@ export function TutorsTable({ tutors, isSuper }: { tutors: TutorRow[]; isSuper: 
           ))}
         </DataTable>
       )}
+      <Pager page={list.page} pages={list.pages} total={list.total} pageSize={list.pageSize} onPage={list.setPage} />
       {editing && <TutorDialog tutor={editing} onClose={() => setEditing(null)} />}
     </section>
   );
@@ -96,21 +94,30 @@ function TutorDialog({ tutor, onClose }: { tutor: TutorRow; onClose: () => void 
 
 export function ProgramsTable({ programs }: { programs: ProgramRow[] }) {
   const [editing, setEditing] = useState<ProgramRow | "new" | null>(null);
+  const list = useClientList(programs, (p) => `${p.nama} ${p.kategori} ${p.jenjang}`);
   return (
-    <section>
-      <SectionTitle title="B. Master Program & Tarif" action={<Button size="sm" onClick={() => setEditing("new")}><Plus /> Tambah Program</Button>} />
-      <DataTable head={["Nama Program", "Kategori", "Jenjang", "Tarif per Pertemuan", "Status", ""]}>
-        {programs.map((p) => (
-          <tr key={p.id}>
-            <Td className="font-semibold">{p.nama}</Td>
-            <Td>{KATEGORI_LABEL[p.kategori]}</Td>
-            <Td>{p.jenjang}</Td>
-            <Td className="font-medium tabular-nums">{rupiah(p.tarif_per_pertemuan)}</Td>
-            <Td><Pill color={p.aktif ? "green" : "gray"}>{p.aktif ? "Aktif" : "Nonaktif"}</Pill></Td>
-            <Td><Button size="sm" variant="outline" onClick={() => setEditing(p)}><Pencil /> Edit</Button></Td>
-          </tr>
-        ))}
-      </DataTable>
+    <section className="space-y-4">
+      <SectionHeader title="B. Master Program & Tarif" actions={<Button onClick={() => setEditing("new")}><Plus /> Tambah Program</Button>} />
+      <Toolbar>
+        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari program, kategori, atau jenjang..." />
+      </Toolbar>
+      {list.total === 0 ? (
+        <EmptyState title={programs.length ? "Tidak ditemukan" : "Belum ada program"} />
+      ) : (
+        <DataTable head={["Nama Program", "Kategori", "Jenjang", "Tarif per Pertemuan", "Status", ""]}>
+          {list.rows.map((p) => (
+            <tr key={p.id}>
+              <Td className="font-medium">{p.nama}</Td>
+              <Td>{KATEGORI_LABEL[p.kategori]}</Td>
+              <Td>{p.jenjang}</Td>
+              <Td className="font-medium tabular-nums">{rupiah(p.tarif_per_pertemuan)}</Td>
+              <Td><Pill color={p.aktif ? "green" : "gray"}>{p.aktif ? "Aktif" : "Nonaktif"}</Pill></Td>
+              <Td><Button size="sm" variant="outline" onClick={() => setEditing(p)}><Pencil /> Edit</Button></Td>
+            </tr>
+          ))}
+        </DataTable>
+      )}
+      <Pager page={list.page} pages={list.pages} total={list.total} pageSize={list.pageSize} onPage={list.setPage} />
       {editing && <ProgramDialog program={editing === "new" ? null : editing} onClose={() => setEditing(null)} />}
     </section>
   );
@@ -118,7 +125,7 @@ export function ProgramsTable({ programs }: { programs: ProgramRow[] }) {
 
 function ProgramDialog({ program, onClose }: { program: ProgramRow | null; onClose: () => void }) {
   const [pending, start] = useTransition();
-  const { register, handleSubmit } = useForm({
+  const { register, handleSubmit, control } = useForm({
     defaultValues: {
       nama: program?.nama ?? "", kategori: program?.kategori ?? "privat", jenjang: program?.jenjang ?? "",
       tarif_per_pertemuan: program?.tarif_per_pertemuan ?? 0, aktif: program?.aktif ?? true,
@@ -137,16 +144,15 @@ function ProgramDialog({ program, onClose }: { program: ProgramRow | null; onClo
       >
         <Field label="Nama program *" className="sm:col-span-2"><Input placeholder="Privat Calistung" {...register("nama")} /></Field>
         <Field label="Kategori">
-          <select className={selectClass} {...register("kategori")}>
-            <option value="privat">Privat</option>
-            <option value="kelompok">Kelompok</option>
-            <option value="abk">ABK</option>
-          </select>
+          <Controller control={control} name="kategori" render={({ field }) => (
+            <AppSelect value={field.value} onChange={field.onChange}
+              options={[{ value: "privat", label: "Privat" }, { value: "kelompok", label: "Kelompok" }, { value: "abk", label: "ABK" }]} />
+          )} />
         </Field>
         <Field label="Jenjang *"><Input placeholder="TK / SD" {...register("jenjang")} /></Field>
         <Field label="Tarif per pertemuan (Rp) *"><Input type="number" min={0} step={1000} {...register("tarif_per_pertemuan")} /></Field>
         <Field label="Status">
-          <label className="flex h-9 items-center gap-2 text-sm"><input type="checkbox" {...register("aktif")} className="size-4" /> Aktif</label>
+          <label className="flex h-9 cursor-pointer items-center gap-2 text-sm"><input type="checkbox" {...register("aktif")} className="size-4 cursor-pointer" /> Program aktif</label>
         </Field>
         <div className="flex justify-end gap-2 sm:col-span-2">
           <Button type="button" variant="outline" onClick={onClose}>Batal</Button>

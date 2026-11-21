@@ -6,8 +6,10 @@ import { Plus, Camera, MapPin, Pencil, ShieldCheck, Clock, Image as ImageIcon } 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { DataTable, Td, Pill, EmptyState, KEHADIRAN, selectClass } from "@/components/app/ui";
+import { DataTable, Td, Pill, EmptyState, KEHADIRAN } from "@/components/app/ui";
 import { FormDialog, Field } from "@/components/app/form-dialog";
+import { Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
+import { AppSelect } from "@/components/app/app-select";
 import { fileHref } from "@/components/app/file-link";
 import { tanggal, jam, tanggalJam, TZ } from "@/lib/format";
 import { createSessions, updateSession, setAttendanceStatus } from "./actions";
@@ -18,6 +20,9 @@ import type { SessionRow } from "@/server/services/sessions";
 export type { SessionRow };
 
 type Win = { buka: number; tutup: number };
+
+const sessionSearchText = (s: SessionRow) =>
+  `${s.students?.nama} ${s.students?.kelas ?? ""} ${s.programs?.nama} ${s.profiles?.nama} ${KEHADIRAN[s.status_kehadiran].label}`;
 
 function inWindow(s: SessionRow, w: Win, now: number) {
   return now >= new Date(s.mulai_at).getTime() - w.buka * 60_000 && now <= new Date(s.selesai_at).getTime() + w.tutup * 60_000;
@@ -60,15 +65,17 @@ export function ScheduleView({
     router.push(`${pathname}?${q}`);
   }
 
-  // Kelompokkan per tanggal (WIB) untuk tampilan kartu
+  // Cari (siswa/tentor/program/kelas) + paging, lalu kelompokkan per tanggal untuk kartu
+  const list = useClientList(sessions, sessionSearchText);
+  const pageRows = list.rows;
   const groups = useMemo(() => {
     const m = new Map<string, SessionRow[]>();
-    for (const s of sessions) {
+    for (const s of pageRows) {
       const k = new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date(s.mulai_at));
       m.set(k, [...(m.get(k) ?? []), s]);
     }
     return [...m.entries()];
-  }, [sessions]);
+  }, [pageRows]);
 
   const absenButton = (s: SessionRow, big = false) => {
     if (isAdmin || s.status_kehadiran !== "terjadwal") return null;
@@ -92,7 +99,7 @@ export function ScheduleView({
     <div className="flex flex-wrap items-center gap-1.5">
       <Pill color={KEHADIRAN[s.status_kehadiran].color}>{KEHADIRAN[s.status_kehadiran].label}</Pill>
       {s.foto_file_id && (
-        <Button size="xs" variant="outline" onClick={() => setPhoto(s)}>
+        <Button size="sm" variant="outline" onClick={() => setPhoto(s)}>
           <ImageIcon /> Foto Bukti
         </Button>
       )}
@@ -107,36 +114,35 @@ export function ScheduleView({
 
   return (
     <div className="space-y-4">
+      <Toolbar>
+        <SearchBox value={list.q} onChange={list.setQ} placeholder={isAdmin ? "Cari siswa, tentor, program, atau kelas..." : "Cari siswa atau program..."} />
+        {isAdmin && <Button onClick={() => setCreating(true)}><Plus /> Buat Jadwal</Button>}
+      </Toolbar>
       {isAdmin && (
-        <div className="flex flex-col gap-2 rounded-xl border bg-card p-3 md:flex-row md:items-end">
-          <div className="grid flex-1 grid-cols-2 gap-2 md:grid-cols-4">
+        <div className="rounded-xl border bg-card p-3">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Field label="Dari"><Input type="date" defaultValue={filters.from} onChange={(e) => e.target.value && setFilter("from", e.target.value)} /></Field>
             <Field label="Sampai"><Input type="date" defaultValue={filters.to} onChange={(e) => e.target.value && setFilter("to", e.target.value)} /></Field>
             <Field label="Tentor">
-              <select className={selectClass} value={filters.tutor} onChange={(e) => setFilter("tutor", e.target.value)}>
-                <option value="">Semua</option>
-                {tutors.map((t) => <option key={t.id} value={t.id}>{t.nama}</option>)}
-              </select>
+              <AppSelect value={filters.tutor} onChange={(v) => setFilter("tutor", v)} aria-label="Tentor"
+                options={[{ value: "", label: "Semua tentor" }, ...tutors.map((t) => ({ value: t.id, label: t.nama }))]} />
             </Field>
             <Field label="Status">
-              <select className={selectClass} value={filters.status} onChange={(e) => setFilter("status", e.target.value)}>
-                <option value="">Semua</option>
-                {Object.entries(KEHADIRAN).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-              </select>
+              <AppSelect value={filters.status} onChange={(v) => setFilter("status", v)} aria-label="Status"
+                options={[{ value: "", label: "Semua status" }, ...Object.entries(KEHADIRAN).map(([k, v]) => ({ value: k, label: v.label }))]} />
             </Field>
           </div>
-          <Button onClick={() => setCreating(true)} className="h-9"><Plus /> Buat Jadwal</Button>
         </div>
       )}
 
-      {sessions.length === 0 ? (
+      {list.total === 0 ? (
         <EmptyState title="Tidak ada jadwal" desc={isAdmin ? "Ubah rentang tanggal atau buat jadwal baru." : "Belum ada jadwal les untuk Anda di rentang ini."} />
       ) : (
         <>
           {isAdmin && (
             <div className="hidden md:block">
               <DataTable head={["Waktu Les", "Siswa & Kelas", "Program", "Tentor", "Kehadiran & Bukti", "Tagihan (Admin)", ""]}>
-                {sessions.map((s) => (
+                {pageRows.map((s) => (
                   <tr key={s.id}>
                     <Td>
                       <p className="font-semibold whitespace-nowrap">{tanggal(s.mulai_at)}</p>
@@ -165,11 +171,11 @@ export function ScheduleView({
           )}
 
           <div className={isAdmin ? "space-y-5 md:hidden" : "space-y-5"}>
-            {groups.map(([day, list]) => (
+            {groups.map(([day, daySessions]) => (
               <section key={day} className="space-y-2">
-                <h2 className="text-sm font-semibold text-muted-foreground">{tanggal(list[0].mulai_at)}</h2>
+                <h2 className="text-sm font-semibold text-muted-foreground">{tanggal(daySessions[0].mulai_at)}</h2>
                 <div className="grid gap-3 md:grid-cols-2">
-                  {list.map((s) => (
+                  {daySessions.map((s) => (
                     <div key={s.id} className="space-y-3 rounded-xl border bg-card p-4">
                       <div className="flex items-start justify-between gap-2">
                         <div>
@@ -198,6 +204,7 @@ export function ScheduleView({
           </div>
         </>
       )}
+      <Pager page={list.page} pages={list.pages} total={list.total} pageSize={list.pageSize} onPage={list.setPage} />
 
       {creating && <CreateDialog tutors={tutors} studentPrograms={studentPrograms} onClose={() => setCreating(false)} />}
       {editing && <EditDialog s={editing} tutors={tutors} onClose={() => setEditing(null)} />}
@@ -228,29 +235,22 @@ function CreateDialog({ tutors, studentPrograms, onClose }: { tutors: { id: stri
     <FormDialog title="Buat Jadwal" onClose={onClose}>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Siswa & program *" className="sm:col-span-2">
-          <select
-            className={selectClass}
+          <AppSelect
             value={spId}
-            onChange={(e) => {
-              setSpId(e.target.value);
-              const sp = studentPrograms.find((x) => x.id === e.target.value);
+            placeholder="Pilih siswa & program"
+            onChange={(v) => {
+              setSpId(v);
+              const sp = studentPrograms.find((x) => x.id === v);
               if (sp?.tutor_id) setTutorId(sp.tutor_id);
             }}
-          >
-            <option value="">Pilih...</option>
-            {studentPrograms
+            options={studentPrograms
               .slice()
               .sort((a, b) => a.students.nama.localeCompare(b.students.nama))
-              .map((sp) => (
-                <option key={sp.id} value={sp.id}>{sp.students.nama} — {sp.programs?.nama}</option>
-              ))}
-          </select>
+              .map((sp) => ({ value: sp.id, label: `${sp.students.nama} — ${sp.programs?.nama}` }))}
+          />
         </Field>
         <Field label="Tentor *" className="sm:col-span-2" hint="Otomatis terisi tentor pengampu, bisa diganti.">
-          <select className={selectClass} value={tutorId} onChange={(e) => setTutorId(e.target.value)}>
-            <option value="">Pilih tentor</option>
-            {tutors.map((t) => <option key={t.id} value={t.id}>{t.nama}</option>)}
-          </select>
+          <AppSelect value={tutorId} onChange={setTutorId} placeholder="Pilih tentor" options={tutors.map((t) => ({ value: t.id, label: t.nama }))} />
         </Field>
         <Field label="Tanggal *"><Input type="date" value={tgl} onChange={(e) => setTgl(e.target.value)} /></Field>
         <Field label="Ulang mingguan" hint="Jumlah minggu (1 = sekali)">
@@ -285,9 +285,7 @@ function EditDialog({ s, tutors, onClose }: { s: SessionRow; tutors: { id: strin
     <FormDialog title="Edit Jadwal" desc={`${s.students?.nama} — ${s.programs?.nama}`} onClose={onClose}>
       <div className="grid gap-3 sm:grid-cols-3">
         <Field label="Tentor" className="sm:col-span-3">
-          <select className={selectClass} value={tutorId} onChange={(e) => setTutorId(e.target.value)}>
-            {tutors.map((t) => <option key={t.id} value={t.id}>{t.nama}</option>)}
-          </select>
+          <AppSelect value={tutorId} onChange={setTutorId} options={tutors.map((t) => ({ value: t.id, label: t.nama }))} />
         </Field>
         <Field label="Tanggal"><Input type="date" value={tgl} onChange={(e) => setTgl(e.target.value)} /></Field>
         <Field label="Mulai"><Input type="time" value={mulai} onChange={(e) => setMulai(e.target.value)} /></Field>
@@ -314,12 +312,16 @@ function OverrideDialog({ s, onClose }: { s: SessionRow; onClose: () => void }) 
   return (
     <FormDialog title="Ubah Kehadiran (Admin)" desc={`${s.students?.nama} • ${tanggal(s.mulai_at)} ${jam(s.mulai_at)}`} onClose={onClose}>
       <Field label="Status baru">
-        <select className={selectClass} value={status} onChange={(e) => setStatus(e.target.value as SessionRow["status_kehadiran"])}>
-          <option value="hadir">Hadir (absen manual)</option>
-          <option value="tidak_hadir">Tidak Hadir</option>
-          <option value="batal">Batal</option>
-          <option value="terjadwal">Reset ke Terjadwal (tentor bisa absen ulang)</option>
-        </select>
+        <AppSelect
+          value={status}
+          onChange={(v) => setStatus(v as SessionRow["status_kehadiran"])}
+          options={[
+            { value: "hadir", label: "Hadir (absen manual)" },
+            { value: "tidak_hadir", label: "Tidak Hadir" },
+            { value: "batal", label: "Batal" },
+            { value: "terjadwal", label: "Reset ke Terjadwal (foto lama dihapus)" },
+          ]}
+        />
       </Field>
       <Field label={status === "hadir" ? "Alasan absen manual *" : "Catatan"}>
         <Textarea rows={2} value={alasan} onChange={(e) => setAlasan(e.target.value)} placeholder="mis. HP tentor rusak, foto dikirim via WA" />

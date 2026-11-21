@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, gt, lt } from "drizzle-orm";
+import { and, eq, gt, lt, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { userSessions, users } from "@/db/schema";
 
@@ -44,9 +44,14 @@ export async function deleteSession(token: string) {
   if (token) await db().delete(userSessions).where(eq(userSessions.id, hashToken(token)));
 }
 
-/** Logout paksa semua perangkat (mis. saat akun dinonaktifkan / password direset). */
-export async function deleteUserSessions(userId: string) {
-  await db().delete(userSessions).where(eq(userSessions.userId, userId));
+/**
+ * Logout paksa semua perangkat (mis. akun dinonaktifkan / password direset).
+ * `keepToken` = sesi yang dipertahankan (perangkat yang sedang dipakai).
+ */
+export async function deleteUserSessions(userId: string, keepToken?: string) {
+  await db()
+    .delete(userSessions)
+    .where(and(eq(userSessions.userId, userId), keepToken ? ne(userSessions.id, hashToken(keepToken)) : undefined));
 }
 
 export function sessionCookieOptions(expires: Date) {

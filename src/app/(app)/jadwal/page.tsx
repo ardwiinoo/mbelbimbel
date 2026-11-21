@@ -4,7 +4,6 @@ import { FolderUp } from "lucide-react";
 import { requireProfile, getSettings } from "@/lib/auth";
 import { PageHeader } from "@/components/app/ui";
 import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { listSessions } from "@/server/services/sessions";
 import { studentProgramOptions, tutorOptions } from "@/server/services/master";
 import { ScheduleView } from "./schedule-view";
@@ -54,7 +53,7 @@ export default async function JadwalPage({ searchParams }: PageProps<"/jadwal">)
               href={settings.link_drive_konten}
               target="_blank"
               rel="noopener"
-              className={cn(buttonVariants({ variant: "secondary" }), "h-9")}
+              className={buttonVariants({ variant: "secondary" })}
             >
               <FolderUp /> Kirim Video Konten (Google Drive)
             </Link>

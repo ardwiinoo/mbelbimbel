@@ -1,9 +1,11 @@
-import { aliasedTable, and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import { appSettings, invoiceCounters, invoiceItems, invoices, programs, sessions, students, users } from "@/db/schema";
 import { assertAdmin, UserError, type Actor } from "../authz";
+import { likePattern } from "./reports";
 
-const tutorUser = aliasedTable(users, "tutor_user");
+const tutorUser = alias(users, "tutor_user");
 
 export type ReadySession = {
   id: string;
@@ -45,26 +47,56 @@ export async function listReadyToBill(actor: Actor): Promise<ReadySession[]> {
   }));
 }
 
-export async function listInvoices(actor: Actor, limit = 100): Promise<InvoiceRow[]> {
+export type InvoiceListOpts = { q?: string; page?: number; pageSize?: number; status?: string };
+export type InvoiceSummary = { all: number; unpaid: number; paid: number; unpaidTotal: number };
+
+/** Riwayat invoice: cari (nomor/siswa/program) + filter status + paging di DB. */
+export async function listInvoices(
+  actor: Actor,
+  opts: InvoiceListOpts = {},
+): Promise<{ rows: InvoiceRow[]; total: number; summary: InvoiceSummary }> {
   assertAdmin(actor);
-  const rows = await db()
-    .select({ i: invoices, s: students, pNama: programs.nama })
-    .from(invoices)
-    .innerJoin(students, eq(students.id, invoices.studentId))
-    .innerJoin(programs, eq(programs.id, invoices.programId))
-    .orderBy(desc(invoices.tglTerbit), desc(invoices.nomor))
-    .limit(limit);
-  return rows.map(({ i, s, pNama }) => ({
-    id: i.id,
-    nomor: i.nomor,
-    tgl_terbit: i.tglTerbit.toISOString(),
-    jumlah_sesi: i.jumlahSesi,
-    total: i.total,
-    status_bayar: i.statusBayar,
-    tgl_bayar: i.tglBayar,
-    students: { nama: s.nama, kelas: s.kelas, ortu_nama: s.ortuNama, ortu_wa: s.ortuWa },
-    programs: { nama: pNama },
-  }));
+  const pageSize = Math.min(Math.max(opts.pageSize ?? 20, 1), 100);
+  const page = Math.max(1, Math.floor(opts.page ?? 1));
+  const status = opts.status === "lunas" || opts.status === "belum_lunas" ? opts.status : undefined;
+  const q = opts.q?.trim();
+  const where = and(
+    status ? eq(invoices.statusBayar, status) : undefined,
+    q ? or(ilike(invoices.nomor, likePattern(q)), ilike(students.nama, likePattern(q)), ilike(programs.nama, likePattern(q))) : undefined,
+  );
+  const [[{ total }], [sum], rows] = await Promise.all([
+    db().select({ total: count() }).from(invoices)
+      .innerJoin(students, eq(students.id, invoices.studentId))
+      .innerJoin(programs, eq(programs.id, invoices.programId))
+      .where(where),
+    db().select({
+      all: count(),
+      unpaid: sql<number>`count(*) filter (where ${invoices.statusBayar} = 'belum_lunas')`.mapWith(Number),
+      unpaidTotal: sql<number>`coalesce(sum(${invoices.total}) filter (where ${invoices.statusBayar} = 'belum_lunas'), 0)`.mapWith(Number),
+    }).from(invoices),
+    db().select({ i: invoices, s: students, pNama: programs.nama }).from(invoices)
+      .innerJoin(students, eq(students.id, invoices.studentId))
+      .innerJoin(programs, eq(programs.id, invoices.programId))
+      .where(where)
+      .orderBy(desc(invoices.tglTerbit), desc(invoices.nomor))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+  ]);
+  return {
+    total,
+    summary: { all: sum.all, unpaid: sum.unpaid, paid: sum.all - sum.unpaid, unpaidTotal: sum.unpaidTotal },
+    rows: rows.map(({ i, s, pNama }) => ({
+      id: i.id,
+      nomor: i.nomor,
+      tgl_terbit: i.tglTerbit.toISOString(),
+      jumlah_sesi: i.jumlahSesi,
+      total: i.total,
+      status_bayar: i.statusBayar,
+      tgl_bayar: i.tglBayar,
+      students: { nama: s.nama, kelas: s.kelas, ortu_nama: s.ortuNama, ortu_wa: s.ortuWa },
+      programs: { nama: pNama },
+    })),
+  };
 }
 
 /**

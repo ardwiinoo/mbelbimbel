@@ -1,11 +1,12 @@
-import { aliasedTable, and, asc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { db } from "@/db";
 import { appSettings, auditLog, programs, sessions, studentPrograms, students, users } from "@/db/schema";
 import { isAdminRole } from "@/lib/roles";
 import { wibToIso } from "@/lib/format";
 import { assertActive, assertAdmin, assertTentor, UserError, type Actor } from "../authz";
-import { withUploadedFile } from "../files";
+import { detachFileRow, purgeStoredFiles, withUploadedFile } from "../files";
 
 type Kehadiran = "terjadwal" | "hadir" | "tidak_hadir" | "batal";
 
@@ -29,7 +30,7 @@ export type SessionRow = {
 
 export type SessionFilters = { from: string; to: string; tutor?: string; status?: string; student?: string };
 
-const tutorUser = aliasedTable(users, "tutor_user");
+const tutorUser = alias(users, "tutor_user");
 
 /** Daftar sesi. Tentor SELALU dibatasi ke sesi miliknya (pengganti RLS sessions). */
 export async function listSessions(actor: Actor, f: SessionFilters): Promise<SessionRow[]> {
@@ -153,15 +154,21 @@ export async function setAttendanceStatus(actor: Actor | null, id: string, statu
   if (status === "hadir" && alasan.trim().length < 3) throw new UserError("Alasan absen manual wajib diisi");
   const patch: Partial<typeof sessions.$inferInsert> = { statusKehadiran: status, catatanAdmin: alasan.trim() || null };
   if (status === "hadir") patch.absenAt = new Date();
-  // file foto lama TIDAK dihapus (retensi: simpan selamanya), hanya dilepas dari sesi
+  // Reset ke Terjadwal: foto lama dihapus (tentor akan absen ulang dengan foto baru)
   if (status === "terjadwal") Object.assign(patch, { absenAt: null, fotoFileId: null, lat: null, lng: null, akurasiM: null });
-  const r = await db()
-    .update(sessions)
-    .set(patch)
-    .where(and(eq(sessions.id, id), eq(sessions.statusTagihan, "belum_rekap")))
-    .returning({ id: sessions.id });
-  if (!r.length) throw new UserError("Sesi sudah terekap ke invoice, tidak bisa diubah");
-  await db().insert(auditLog).values({ actorId: actor.id, aksi: "override_absen", target: id, detail: { status, alasan } });
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new UserError("Sesi tidak ditemukan");
+  const oldKey = await db().transaction(async (tx) => {
+    const [cur] = await tx
+      .select({ fotoFileId: sessions.fotoFileId })
+      .from(sessions)
+      .where(and(eq(sessions.id, id), eq(sessions.statusTagihan, "belum_rekap")))
+      .for("update");
+    if (!cur) throw new UserError("Sesi sudah terekap ke invoice, tidak bisa diubah");
+    await tx.update(sessions).set(patch).where(eq(sessions.id, id));
+    await tx.insert(auditLog).values({ actorId: actor.id, aksi: "override_absen", target: id, detail: { status, alasan, foto_dihapus: status === "terjadwal" && !!cur.fotoFileId } });
+    return status === "terjadwal" ? detachFileRow(tx, cur.fotoFileId) : null;
+  });
+  await purgeStoredFiles([oldKey]);
   return "Status kehadiran diperbarui";
 }
 
