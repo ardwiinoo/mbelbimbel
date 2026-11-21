@@ -3,9 +3,8 @@ import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { db } from "@/db";
 import { appSettings, auditLog, programs, sessions, studentPrograms, students, users } from "@/db/schema";
-import { isAdminRole } from "@/lib/roles";
 import { wibToIso } from "@/lib/format";
-import { assertActive, assertAdmin, assertTentor, UserError, type Actor } from "../authz";
+import { assertCan, assertTutor, scopeOf, UserError, type Actor } from "../authz";
 import { detachFileRow, purgeStoredFiles, withUploadedFile } from "../files";
 
 type Kehadiran = "terjadwal" | "hadir" | "tidak_hadir" | "batal";
@@ -34,8 +33,8 @@ const tutorUser = alias(users, "tutor_user");
 
 /** Daftar sesi. Tentor SELALU dibatasi ke sesi miliknya (pengganti RLS sessions). */
 export async function listSessions(actor: Actor, f: SessionFilters): Promise<SessionRow[]> {
-  assertActive(actor);
-  const admin = isAdminRole(actor.role);
+  // Akses Jadwal (Lihat) → semua sesi; tanpa akses tapi Mengajar → hanya sesi miliknya
+  const admin = scopeOf(actor, "jadwal") === "all";
   const status = ["terjadwal", "hadir", "tidak_hadir", "batal"].includes(f.status ?? "") ? (f.status as Kehadiran) : undefined;
   const uuid = (v?: string) => (v && /^[0-9a-f-]{36}$/i.test(v) ? v : undefined);
 
@@ -95,12 +94,12 @@ const createSchema = z.object({
 });
 
 async function assertActiveTutor(tutorId: string) {
-  const [t] = await db().select({ id: users.id }).from(users).where(and(eq(users.id, tutorId), eq(users.role, "tentor"), eq(users.status, "aktif"))).limit(1);
+  const [t] = await db().select({ id: users.id }).from(users).where(and(eq(users.id, tutorId), eq(users.isTutor, true), eq(users.status, "aktif"))).limit(1);
   if (!t) throw new UserError("Tentor tidak valid atau nonaktif");
 }
 
 export async function createSessions(actor: Actor | null, input: z.input<typeof createSchema>) {
-  assertAdmin(actor);
+  assertCan(actor, "jadwal", "write");
   const p = createSchema.safeParse(input);
   if (!p.success) throw new UserError(p.error.issues[0].message);
   const v = p.data;
@@ -123,6 +122,7 @@ export async function createSessions(actor: Actor | null, input: z.input<typeof 
       tutorId: v.tutor_id,
       mulaiAt: new Date(wibToIso(ds, v.jam_mulai)),
       selesaiAt: new Date(wibToIso(ds, v.jam_selesai)),
+      createdBy: actor.id,
     };
   });
   await db().insert(sessions).values(rows);
@@ -132,7 +132,7 @@ export async function createSessions(actor: Actor | null, input: z.input<typeof 
 const editSchema = z.object({ id: z.string().uuid(), tutor_id: z.string().uuid(), tanggal: ymd, jam_mulai: hhmm, jam_selesai: hhmm });
 
 export async function updateSession(actor: Actor | null, input: z.input<typeof editSchema>) {
-  assertAdmin(actor);
+  assertCan(actor, "jadwal", "write");
   const p = editSchema.safeParse(input);
   if (!p.success) throw new UserError("Data tidak valid");
   const v = p.data;
@@ -140,7 +140,13 @@ export async function updateSession(actor: Actor | null, input: z.input<typeof e
   await assertActiveTutor(v.tutor_id);
   const r = await db()
     .update(sessions)
-    .set({ tutorId: v.tutor_id, mulaiAt: new Date(wibToIso(v.tanggal, v.jam_mulai)), selesaiAt: new Date(wibToIso(v.tanggal, v.jam_selesai)) })
+    .set({
+      tutorId: v.tutor_id,
+      mulaiAt: new Date(wibToIso(v.tanggal, v.jam_mulai)),
+      selesaiAt: new Date(wibToIso(v.tanggal, v.jam_selesai)),
+      updatedAt: new Date(),
+      updatedBy: actor.id,
+    })
     .where(and(eq(sessions.id, v.id), eq(sessions.statusTagihan, "belum_rekap")))
     .returning({ id: sessions.id });
   if (!r.length) throw new UserError("Sesi sudah terekap ke invoice, tidak bisa diubah");
@@ -149,10 +155,15 @@ export async function updateSession(actor: Actor | null, input: z.input<typeof e
 
 /** Override admin: absen manual / tidak hadir / batal / reset ke terjadwal. */
 export async function setAttendanceStatus(actor: Actor | null, id: string, status: Kehadiran, alasan: string) {
-  assertAdmin(actor);
+  assertCan(actor, "jadwal", "write");
   if (!["terjadwal", "hadir", "tidak_hadir", "batal"].includes(status)) throw new UserError("Status tidak valid");
   if (status === "hadir" && alasan.trim().length < 3) throw new UserError("Alasan absen manual wajib diisi");
-  const patch: Partial<typeof sessions.$inferInsert> = { statusKehadiran: status, catatanAdmin: alasan.trim() || null };
+  const patch: Partial<typeof sessions.$inferInsert> = {
+    statusKehadiran: status,
+    catatanAdmin: alasan.trim() || null,
+    updatedAt: new Date(),
+    updatedBy: actor.id,
+  };
   if (status === "hadir") patch.absenAt = new Date();
   // Reset ke Terjadwal: foto lama dihapus (tentor akan absen ulang dengan foto baru)
   if (status === "terjadwal") Object.assign(patch, { absenAt: null, fotoFileId: null, lat: null, lng: null, akurasiM: null });
@@ -180,7 +191,7 @@ export type AttendanceInput = { sessionId: string; lat: number; lng: number; aku
  * Satu transaksi dengan penyimpanan foto; foto dihapus lagi bila ditolak.
  */
 export async function submitAttendance(actor: Actor | null, input: AttendanceInput) {
-  assertTentor(actor);
+  assertTutor(actor);
   const { sessionId, lat, lng, akurasi } = input;
   if (!/^[0-9a-f-]{36}$/i.test(sessionId)) throw new UserError("Sesi tidak ditemukan");
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
@@ -203,7 +214,16 @@ export async function submitAttendance(actor: Actor | null, input: AttendanceInp
 
     await tx
       .update(sessions)
-      .set({ statusKehadiran: "hadir", absenAt: now, fotoFileId: fileId, lat, lng, akurasiM: Number.isFinite(akurasi) ? akurasi : null })
+      .set({
+        statusKehadiran: "hadir",
+        absenAt: now,
+        fotoFileId: fileId,
+        lat,
+        lng,
+        akurasiM: Number.isFinite(akurasi) ? akurasi : null,
+        updatedAt: now,
+        updatedBy: actor.id,
+      })
       .where(eq(sessions.id, sessionId));
     return now;
   });

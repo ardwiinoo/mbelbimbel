@@ -2,8 +2,8 @@ import { and, asc, count, desc, eq, ilike, isNull, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import { files, programs, progressReports, studentPrograms, students, users } from "@/db/schema";
-import { isAdminRole } from "@/lib/roles";
-import { assertActive, assertTentor, UserError, type Actor } from "../authz";
+import { can } from "@/lib/access";
+import { assertActive, assertTutor, scopeOf, UserError, type Actor } from "../authz";
 import { detachFileRow, purgeStoredFiles, withUploadedFile } from "../files";
 
 type StudentMini = { nama: string; kelas: string | null; ortu_wa: string | null; ortu_nama: string | null };
@@ -12,6 +12,7 @@ export type ReportRow = {
   id: string;
   student_id: string;
   program_id: string | null;
+  tutor_id: string;
   file_id: string;
   file_name: string;
   periode: string | null;
@@ -41,21 +42,22 @@ export function likePattern(q: string) {
   return `%${q.trim().slice(0, 100).replace(/[\\%_]/g, (c) => "\\" + c)}%`;
 }
 
-export type ListOpts = { q?: string; page?: number; pageSize?: number };
+/** mine = hanya laporan unggahan akun ini (untuk bagian "Laporan Siswa Saya"). */
+export type ListOpts = { q?: string; page?: number; pageSize?: number; mine?: boolean };
 
 /**
  * Admin: semua laporan. Tentor: hanya laporan unggahannya (pengganti RLS progress_reports).
  * Paging + pencarian dilakukan di DB (aman untuk data yang terus bertambah).
  */
 export async function listReports(actor: Actor, opts: ListOpts = {}): Promise<{ rows: ReportRow[]; total: number }> {
-  assertActive(actor);
-  const admin = isAdminRole(actor.role);
+  // Akses Laporan (Lihat) → semua; tanpa akses tapi Mengajar → hanya laporan unggahannya
+  const admin = scopeOf(actor, "laporan") === "all";
   const pageSize = Math.min(Math.max(opts.pageSize ?? 20, 1), 500);
   const page = Math.max(1, Math.floor(opts.page ?? 1));
   const q = opts.q?.trim();
   const where = and(
     isNull(progressReports.deletedAt),
-    admin ? undefined : eq(progressReports.tutorId, actor.id),
+    admin && !opts.mine ? undefined : eq(progressReports.tutorId, actor.id),
     q
       ? or(
           ilike(students.nama, likePattern(q)),
@@ -99,6 +101,7 @@ export async function listReports(actor: Actor, opts: ListOpts = {}): Promise<{ 
     id: r.id,
     student_id: r.studentId,
     program_id: r.programId,
+    tutor_id: r.tutorId,
     file_id: r.fileId,
     file_name: x.fileName,
     periode: r.periode,
@@ -114,7 +117,7 @@ export async function listReports(actor: Actor, opts: ListOpts = {}): Promise<{ 
 
 /** Siswa + program yang diampu tentor ini. */
 export async function listMyAssignments(actor: Actor): Promise<AssignmentRow[]> {
-  assertTentor(actor);
+  assertTutor(actor);
   const rows = await db()
     .select({ sp: studentPrograms, s: students, pNama: programs.nama })
     .from(studentPrograms)
@@ -136,7 +139,7 @@ export async function uploadReport(
   actor: Actor | null,
   input: { studentId: string; programId: string; periode: string | null; file: File | null },
 ) {
-  assertTentor(actor);
+  assertTutor(actor);
   const uuid = /^[0-9a-f-]{36}$/i;
   if (!uuid.test(input.studentId) || !uuid.test(input.programId)) throw new UserError("Data siswa tidak valid");
   const [own] = await db()
@@ -168,7 +171,7 @@ export async function uploadReport(
 
 /**
  * Edit laporan (ganti file PDF dan/atau periode) — untuk koreksi salah upload.
- * Admin/Super Admin: semua laporan. Tentor: hanya laporan unggahannya sendiri.
+ * Akses Laporan (Kelola): semua laporan. Tentor: hanya laporan unggahannya sendiri.
  * Dicatat siapa & kapan mengedit; file lama dihapus agar storage tidak menumpuk.
  */
 export async function updateReport(
@@ -183,7 +186,8 @@ export async function updateReport(
     .where(and(eq(progressReports.id, input.reportId), isNull(progressReports.deletedAt)))
     .limit(1);
   // 404 yang sama untuk "tidak ada" maupun "bukan milik Anda"
-  if (!rep || (!isAdminRole(actor.role) && !(actor.role === "tentor" && rep.tutorId === actor.id))) {
+  // Boleh edit: akses Laporan (Kelola), ATAU tentor pengunggah laporan ini
+  if (!rep || (!can(actor, "laporan", "write") && !(actor.isTutor && rep.tutorId === actor.id))) {
     throw new UserError("Laporan tidak ditemukan");
   }
 

@@ -2,7 +2,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db, type Tx } from "@/db";
 import { files, materials, progressReports, sessions } from "@/db/schema";
 import { deleteFile, saveFile } from "@/lib/storage";
-import { isAdminRole } from "@/lib/roles";
+import { can } from "@/lib/access";
 import type { Actor } from "./authz";
 import { validateUpload, type FileKind } from "./file-rules";
 
@@ -36,24 +36,25 @@ export async function withUploadedFile<T>(
 export type FileRow = typeof files.$inferSelect;
 
 /**
- * Pengganti Storage policy: boleh-kah `actor` membaca file ini?
- * - assessment : admin saja
- * - attendance : admin, atau tentor pemilik sesi yang memakai foto ini
- * - report     : admin, atau tentor pengunggah laporan (yang belum dihapus)
- * - material   : semua user aktif, selama materinya belum dihapus (admin selalu)
+ * Siapa boleh membaca file ini (pengganti Storage policy):
+ * - assessment : akses Asesmen (Lihat)
+ * - attendance : akses Jadwal (Lihat), ATAU tentor pemilik sesi yang memakai foto ini
+ * - report     : akses Laporan (Lihat), ATAU tentor pengunggah laporan (belum dihapus)
+ * - material   : akses Bank Materi (Lihat), selama materinya belum dihapus
+ *                (pemegang Kelola tetap bisa membuka file materi yang dihapus)
  */
 export async function findReadableFile(actor: Actor, fileId: string): Promise<FileRow | null> {
-  if (!/^[0-9a-f-]{36}$/i.test(fileId)) return null;
+  if (actor.status !== "aktif" || !/^[0-9a-f-]{36}$/i.test(fileId)) return null;
   const [f] = await db().select().from(files).where(eq(files.id, fileId)).limit(1);
   if (!f) return null;
-  if (isAdminRole(actor.role)) return f;
-  if (actor.role !== "tentor") return null;
 
   let rows: unknown[] = [];
   switch (f.kind) {
     case "assessment":
-      return null;
+      return can(actor, "asesmen", "read") ? f : null;
     case "attendance":
+      if (can(actor, "jadwal", "read")) return f;
+      if (!actor.isTutor) return null;
       rows = await db()
         .select({ id: sessions.id })
         .from(sessions)
@@ -61,6 +62,8 @@ export async function findReadableFile(actor: Actor, fileId: string): Promise<Fi
         .limit(1);
       break;
     case "report":
+      if (can(actor, "laporan", "read")) return f;
+      if (!actor.isTutor) return null;
       rows = await db()
         .select({ id: progressReports.id })
         .from(progressReports)
@@ -68,6 +71,8 @@ export async function findReadableFile(actor: Actor, fileId: string): Promise<Fi
         .limit(1);
       break;
     case "material":
+      if (can(actor, "materi", "write")) return f;
+      if (!can(actor, "materi", "read")) return null;
       rows = await db()
         .select({ id: materials.id })
         .from(materials)

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Plus, Pencil, Trash2, MessageCircle, Upload, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Pill, EmptyState } from "@/components/app/ui";
-import { Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
+import { FilterRow, filterSelectClass, Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
 import { FileLinks } from "@/components/app/file-link";
 import { umur, waLink, KATEGORI_LABEL, tanggal } from "@/lib/format";
 import { postForm } from "@/lib/post-form";
@@ -16,18 +16,21 @@ import { AppSelect } from "@/components/app/app-select";
 
 export type { StudentRow };
 
+/** Izin halaman Siswa untuk akun yang login (dihitung di server). */
+export type StudentPerm = { viewAll: boolean; manage: boolean; asesmen: "read" | "write" | null };
+
 type Opt = { id: string; nama: string };
 
 const searchText = (s: StudentRow) =>
   [s.nama, s.kelas, s.sekolah, s.alamat, s.ortu_nama, s.ortu_wa, ...s.student_programs.map((p) => `${p.programs?.nama} ${p.profiles?.nama ?? ""}`)].join(" ");
 
 export function StudentsView({
-  isAdmin,
+  perm,
   students,
   programs,
   tutors,
 }: {
-  isAdmin: boolean;
+  perm: StudentPerm;
   students: StudentRow[];
   programs: (Opt & { kategori: string })[];
   tutors: Opt[];
@@ -58,18 +61,18 @@ export function StudentsView({
   return (
     <div className="space-y-4">
       <Toolbar>
-        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari siswa, kelas, sekolah, orang tua, atau program..." />
-        {isAdmin && (
-          <div className="grid grid-cols-3 gap-2 sm:flex [&>select]:sm:w-40">
-            <AppSelect className="sm:w-40" value={fProgram} onChange={setFProgram} aria-label="Program"
+        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari siswa, kelas, orang tua…" />
+        {perm.viewAll && (
+          <FilterRow>
+            <AppSelect className={filterSelectClass} value={fProgram} onChange={setFProgram} aria-label="Program"
               options={[{ value: "", label: "Semua program" }, ...programs.map((p) => ({ value: p.id, label: p.nama }))]} />
-            <AppSelect className="sm:w-40" value={fTutor} onChange={setFTutor} aria-label="Tentor"
+            <AppSelect className={filterSelectClass} value={fTutor} onChange={setFTutor} aria-label="Tentor"
               options={[{ value: "", label: "Semua tentor" }, ...tutors.map((t) => ({ value: t.id, label: t.nama }))]} />
-            <AppSelect className="sm:w-40" value={fStatus} onChange={setFStatus} aria-label="Status"
+            <AppSelect className={filterSelectClass} value={fStatus} onChange={setFStatus} aria-label="Status"
               options={[{ value: "", label: "Semua status" }, ...[{ value: "aktif", label: "Aktif" }, { value: "nonaktif", label: "Nonaktif" }]]} />
-          </div>
+          </FilterRow>
         )}
-        {isAdmin && (
+        {perm.manage && (
           <Button onClick={() => setEditing("new")}>
             <Plus /> Tambah Siswa
           </Button>
@@ -79,7 +82,7 @@ export function StudentsView({
       {rows.length === 0 ? (
         <EmptyState
           title="Belum ada siswa"
-          desc={isAdmin ? "Tambahkan siswa pertama atau ubah filter." : "Belum ada siswa yang di-assign ke Anda."}
+          desc={perm.viewAll ? "Tambahkan siswa pertama atau ubah filter." : "Belum ada siswa yang di-assign ke Anda."}
         />
       ) : (
         <>
@@ -90,36 +93,50 @@ export function StudentsView({
                 "Alamat",
                 "Program",
                 "Orang Tua & WA",
-                ...(isAdmin ? ["Dokumen Asesmen (Admin)"] : []),
+                ...(perm.asesmen ? ["Dokumen Asesmen"] : []),
                 "Status",
-                ...(isAdmin ? [""] : []),
+                ...(perm.manage ? [""] : []),
               ]}
             >
               {rows.map((s) => (
                 <tr key={s.id}>
                   <Td><ProfileCell s={s} /></Td>
                   <Td className="max-w-48 text-muted-foreground">{s.alamat ?? "-"}</Td>
-                  <Td><ProgramCell s={s} isAdmin={isAdmin} /></Td>
+                  <Td><ProgramCell s={s} showTutor={perm.viewAll} /></Td>
                   <Td><ParentCell s={s} /></Td>
-                  {isAdmin && <Td><AssessmentCell s={s} /></Td>}
+                  {perm.asesmen && <Td><AssessmentCell s={s} canUpload={perm.asesmen === "write"} /></Td>}
                   <Td>{statusPill(s)}</Td>
-                  {isAdmin && <Td><RowActions s={s} onEdit={() => setEditing(s)} /></Td>}
+                  {perm.manage && <Td><RowActions s={s} onEdit={() => setEditing(s)} /></Td>}
                 </tr>
               ))}
             </DataTable>
           </div>
           <div className="grid gap-3 md:hidden">
             {rows.map((s) => (
-              <div key={s.id} className="space-y-3 rounded-xl border bg-card p-4">
-                <div className="flex items-start justify-between gap-2">
+              <div key={s.id} className="overflow-hidden rounded-xl border bg-card">
+                <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3">
                   <ProfileCell s={s} />
                   {statusPill(s)}
                 </div>
-                <ProgramCell s={s} isAdmin={isAdmin} />
-                {s.alamat && <p className="text-sm text-muted-foreground">{s.alamat}</p>}
-                <ParentCell s={s} />
-                {isAdmin && <AssessmentCell s={s} />}
-                {isAdmin && <RowActions s={s} onEdit={() => setEditing(s)} />}
+                <dl className="grid gap-3 border-t px-4 py-3.5 text-sm">
+                  <CardRow label="Program">
+                    <ProgramCell s={s} showTutor={perm.viewAll} />
+                  </CardRow>
+                  <CardRow label="Orang tua">
+                    <ParentCell s={s} />
+                  </CardRow>
+                  {s.alamat && <CardRow label="Alamat">{s.alamat}</CardRow>}
+                  {perm.asesmen && s.student_programs.some((p) => p.programs?.kategori === "abk") && (
+                    <CardRow label="Asesmen">
+                      <AssessmentCell s={s} canUpload={perm.asesmen === "write"} />
+                    </CardRow>
+                  )}
+                </dl>
+                {perm.manage && (
+                  <div className="flex justify-end border-t bg-muted/30 px-4 py-2.5">
+                    <RowActions s={s} onEdit={() => setEditing(s)} />
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -127,7 +144,7 @@ export function StudentsView({
       )}
       <Pager page={list.page} pages={list.pages} total={list.total} pageSize={list.pageSize} onPage={list.setPage} />
 
-      {isAdmin && editing && (
+      {perm.manage && editing && (
         <StudentDialog
           student={editing === "new" ? null : editing}
           programs={programs}
@@ -135,6 +152,16 @@ export function StudentsView({
           onClose={() => setEditing(null)}
         />
       )}
+    </div>
+  );
+}
+
+/** Baris label–isi pada kartu HP. */
+function CardRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[5.25rem_minmax(0,1fr)] gap-3">
+      <dt className="pt-px text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className="min-w-0">{children}</dd>
     </div>
   );
 }
@@ -152,7 +179,7 @@ function ProfileCell({ s }: { s: StudentRow }) {
   );
 }
 
-function ProgramCell({ s, isAdmin }: { s: StudentRow; isAdmin: boolean }) {
+function ProgramCell({ s, showTutor }: { s: StudentRow; showTutor: boolean }) {
   if (!s.student_programs.length) return <span className="text-muted-foreground">-</span>;
   return (
     <div className="space-y-1">
@@ -164,7 +191,7 @@ function ProgramCell({ s, isAdmin }: { s: StudentRow; isAdmin: boolean }) {
             </b>{" "}
             • {sp.programs?.nama.replace(/^(Privat|ABK|Kelompok)\s/, "")}
           </p>
-          {isAdmin && (
+          {showTutor && (
             <p className="text-xs text-muted-foreground">Tentor: {sp.profiles?.nama ?? "belum ditetapkan"}</p>
           )}
         </div>
@@ -191,7 +218,7 @@ function ParentCell({ s }: { s: StudentRow }) {
   );
 }
 
-function AssessmentCell({ s }: { s: StudentRow }) {
+function AssessmentCell({ s, canUpload }: { s: StudentRow; canUpload: boolean }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -203,6 +230,13 @@ function AssessmentCell({ s }: { s: StudentRow }) {
     if (!f) return;
     if (!["application/pdf", "image/jpeg", "image/png"].includes(f.type)) return toast.error("Format harus PDF/JPG/PNG");
     if (f.size > 10 * 1024 * 1024) return toast.error("Maksimal 10 MB");
+    if (
+      latest &&
+      !confirm(`Ganti dokumen asesmen ${s.nama}?\n\nFile lama (${latest.file_name ?? "dokumen"}) akan DIHAPUS PERMANEN dan diganti "${f.name}".`)
+    ) {
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
     setBusy(true);
     const form = new FormData();
     form.set("student_id", s.id);
@@ -228,16 +262,21 @@ function AssessmentCell({ s }: { s: StudentRow }) {
       ) : (
         <Pill color="amber">Belum ada</Pill>
       )}
-      <input
-        ref={inputRef}
-        type="file"
-        accept="application/pdf,image/jpeg,image/png"
-        hidden
-        onChange={(e) => onFile(e.target.files?.[0])}
-      />
-      <Button size="sm" variant={latest ? "ghost" : "outline"} disabled={busy} onClick={() => inputRef.current?.click()}>
-        <Upload /> {busy ? "Mengunggah..." : latest ? "Ganti file" : "Upload asesmen"}
-      </Button>
+      {canUpload && (
+        <>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="application/pdf,image/jpeg,image/png"
+            hidden
+            onChange={(e) => onFile(e.target.files?.[0])}
+          />
+          <Button size="sm" variant={latest ? "ghost" : "outline"} disabled={busy} onClick={() => inputRef.current?.click()}>
+            <Upload /> {busy ? "Mengunggah..." : latest ? "Ganti file" : "Upload asesmen"}
+          </Button>
+          {latest && <p className="text-[11px] text-muted-foreground">Mengganti file akan menghapus file lama.</p>}
+        </>
+      )}
     </div>
   );
 }

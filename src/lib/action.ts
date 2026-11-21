@@ -4,10 +4,10 @@ import { UserError, type Actor } from "@/server/authz";
 
 export type ActionResult = { ok: true; message?: string; id?: string } | { ok: false; error: string };
 
-/** Actor dari sesi saat ini (null bila tidak login). Validasi peran dilakukan di service. */
+/** Actor dari sesi saat ini (null bila tidak login). Pengecekan akses dilakukan di service. */
 export async function currentActor(): Promise<Actor | null> {
   const p = await getProfile();
-  return p ? { id: p.id, role: p.role, status: p.status, nama: p.nama } : null;
+  return p ? { id: p.id, nama: p.nama, status: p.status, isSuperuser: p.isSuperuser, isTutor: p.isTutor, perms: p.perms } : null;
 }
 
 const PG_MESSAGES: Record<string, string> = {

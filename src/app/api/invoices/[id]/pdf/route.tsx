@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { currentActor } from "@/lib/action";
-import { isAdminRole } from "@/lib/roles";
+import { can } from "@/lib/access";
 import { getInvoicePdfData } from "@/server/services/invoices";
 import { InvoiceDoc } from "./invoice-doc";
 
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest, ctx: RouteContext<"/api/invoices/[id]/pdf">) {
   const { id } = await ctx.params;
   const actor = await currentActor();
-  if (!actor || actor.status !== "aktif" || !isAdminRole(actor.role)) {
+  if (!actor || actor.status !== "aktif" || !can(actor, "invoice", "read")) {
     return new NextResponse("Forbidden", { status: 403 });
   }
   const data = await getInvoicePdfData(actor, id);

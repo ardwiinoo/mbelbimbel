@@ -1,7 +1,7 @@
-import { isAdminRole } from "@/lib/roles";
+import { can } from "@/lib/access";
 import Link from "next/link";
 import { FolderUp } from "lucide-react";
-import { requireProfile, getSettings } from "@/lib/auth";
+import { requireAccessOrTutor, getSettings } from "@/lib/auth";
 import { PageHeader } from "@/components/app/ui";
 import { buttonVariants } from "@/components/ui/button";
 import { listSessions } from "@/server/services/sessions";
@@ -18,8 +18,9 @@ function todayWib(offsetDays = 0) {
 const ymd = (v: string) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "");
 
 export default async function JadwalPage({ searchParams }: PageProps<"/jadwal">) {
-  const profile = await requireProfile();
-  const isAdmin = isAdminRole(profile.role);
+  const profile = await requireAccessOrTutor("jadwal");
+  const perm = { viewAll: can(profile, "jadwal", "read"), manage: can(profile, "jadwal", "write") };
+  const isAdmin = perm.viewAll;
   const sp = await searchParams;
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : "");
 
@@ -34,8 +35,8 @@ export default async function JadwalPage({ searchParams }: PageProps<"/jadwal">)
   const [sessions, settings, tutors, studentPrograms] = await Promise.all([
     listSessions(profile, filters),
     getSettings(),
-    isAdmin ? tutorOptions(profile) : Promise.resolve([]),
-    isAdmin ? studentProgramOptions(profile) : Promise.resolve([]),
+    perm.viewAll ? tutorOptions(profile) : Promise.resolve([]),
+    perm.manage ? studentProgramOptions(profile) : Promise.resolve([]),
   ]);
 
   return (
@@ -61,7 +62,7 @@ export default async function JadwalPage({ searchParams }: PageProps<"/jadwal">)
         }
       />
       <ScheduleView
-        isAdmin={isAdmin}
+        perm={perm}
         me={{ id: profile.id, nama: profile.nama }}
         sessions={sessions}
         filters={filters}

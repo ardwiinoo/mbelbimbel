@@ -1,6 +1,6 @@
 # Bimbel App
 
-PWA internal bimbel untuk **Super Admin**, **Admin**, dan **Tentor**: data siswa + asesmen ABK (privat), tentor & tarif, jadwal dengan **absen foto kamera + GPS**, laporan perkembangan (PDF), bank materi, dan **invoice semi-otomatis** dengan nota PDF.
+PWA internal bimbel dengan **akses per modul** (Lihat/Kelola per akun, bukan per role): data siswa + asesmen ABK (privat), tentor & tarif, jadwal dengan **absen foto kamera + GPS**, laporan perkembangan (PDF), bank materi, dan **invoice semi-otomatis** dengan nota PDF.
 
 **Stack:** Next.js 16 (`output: 'standalone'`) · PostgreSQL + Drizzle ORM · sesi login sendiri (cookie httpOnly, `scrypt`) · file di disk lokal (`UPLOAD_DIR`) · Tailwind + shadcn/ui · Docker + GitHub Actions + Caddy.
 
@@ -13,9 +13,9 @@ pnpm db:reset    # migrasi + data demo (hanya DB lokal)
 pnpm dev         # http://localhost:3000
 ```
 
-Akun demo (password `Demo12345!`): `superadmin@bimbel.test`, `admin@bimbel.test`, `aulia@bimbel.test` / `dimas@bimbel.test` / `rina@bimbel.test` (tentor).
+Akun demo (password `Demo12345!`): `superadmin@bimbel.test`, `admin@bimbel.test`, `aulia@bimbel.test` / `dimas@bimbel.test` / `rina@bimbel.test` (tentor), `bayu@bimbel.test` (admin + tentor).
 
-Uji otorisasi & keamanan file: `pnpm test:authz` (tambah `BASE_URL=http://localhost:3000` untuk uji HTTP).
+Uji otorisasi & keamanan file: `pnpm test:authz` (tambah `BASE_URL=http://localhost:3000` untuk uji HTTP). Uji konversi data role → akses per modul: `pnpm test:migrasi` (butuh `TEST_DATABASE_URL` ke DB lokal terpisah).
 
 ## Deploy
 
@@ -32,7 +32,7 @@ Uji otorisasi & keamanan file: `pnpm test:authz` (tambah `BASE_URL=http://localh
 
 ## Keamanan
 
-Otorisasi seluruhnya di kode server (`src/server/services/*`, `src/server/authz.ts`). Tentor hanya melihat siswa, jadwal, dan laporannya sendiri; asesmen & tarif khusus admin; kelola akun khusus Super Admin. File privat disajikan lewat `/api/files/[id]` setelah cek izin (streaming, `nosniff`); upload divalidasi tipe (magic bytes) & ukuran, nama di disk UUID acak.
+Otorisasi seluruhnya di kode server (`src/server/services/*`, `src/server/authz.ts`, daftar modul di `src/lib/access.ts`). Tiap akun punya level **Tidak ada / Lihat / Kelola** per modul (Siswa, Asesmen, Tentor & Tarif, Jadwal, Laporan, Materi, Invoice, Pengaturan, Pengguna), plus centang **Mengajar** (absen & laporan untuk siswanya sendiri) dan **Super Admin** (akses penuh, tersembunyi dari pengelola akun lain). Pengelola akun tidak bisa memberi akses melebihi aksesnya sendiri; pembuat/pengubah data tercatat (`created_by`/`updated_by`). File privat disajikan lewat `/api/files/[id]` setelah cek izin (streaming, `nosniff`); upload divalidasi tipe (magic bytes) & ukuran, nama di disk UUID acak.
 
 ## Struktur
 

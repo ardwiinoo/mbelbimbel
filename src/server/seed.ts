@@ -2,7 +2,8 @@
 // (SEED_DEMO=true pada DB kosong). Memakai service yang sama dengan aplikasi.
 import { count } from "drizzle-orm";
 import { db } from "@/db";
-import { appSettings, files, materials, programs, progressReports, sessions, studentAssessments, studentPrograms, students, users } from "@/db/schema";
+import { appSettings, files, materials, programs, progressReports, sessions, studentAssessments, studentPrograms, students, userPermissions, users } from "@/db/schema";
+import { PRESETS } from "@/lib/access";
 import { saveFile } from "@/lib/storage";
 import type { Actor } from "./authz";
 import { hashPassword } from "./password";
@@ -68,13 +69,31 @@ export async function seedDemo(log: (m: string) => void = console.log) {
     })
     .onConflictDoUpdate({ target: appSettings.id, set: { namaBimbel: "Bimbel Cerdas Bantul", waAdmin: "0811-2233-4455" } });
 
-  const mk = (email: string, nama: string, role: "super_admin" | "admin" | "tentor", noWa: string, spesialisasi: string | null = null) =>
-    db().insert(users).values({ email, passwordHash: pw, nama, role, noWa, spesialisasi }).returning({ id: users.id }).then((r) => r[0].id);
-  await mk("superadmin@bimbel.test", "Pak Owner", "super_admin", "0811-0000-0001");
-  const adminId = await mk("admin@bimbel.test", "Admin Bimbel", "admin", "0811-2233-4455");
-  const aulia = await mk("aulia@bimbel.test", "Kak Aulia", "tentor", "0812-1111-2222", "Calistung, SD Umum");
-  const dimas = await mk("dimas@bimbel.test", "Kak Dimas", "tentor", "0813-3333-4444", "ABK, Pendampingan Fokus");
-  const rina = await mk("rina@bimbel.test", "Kak Rina", "tentor", "0856-5555-6666", "Fisika, Matematika SMP");
+  /** Buat akun dari paket akses (lihat PRESETS di src/lib/access.ts). */
+  const mk = async (
+    email: string,
+    nama: string,
+    preset: "super" | "admin" | "tentor" | "admin_tentor",
+    noWa: string,
+    spesialisasi: string | null = null,
+    createdBy: string | null = null,
+  ) => {
+    const p = preset === "super" ? null : PRESETS.find((x) => x.key === preset)!;
+    const [u] = await db()
+      .insert(users)
+      .values({ email, passwordHash: pw, nama, noWa, spesialisasi, isSuperuser: preset === "super", isTutor: p?.isTutor ?? false, createdBy, updatedBy: createdBy })
+      .returning({ id: users.id });
+    const rows = Object.entries(p?.perms ?? {}).map(([module, level]) => ({ userId: u.id, module, level: level! }));
+    if (rows.length) await db().insert(userPermissions).values(rows);
+    return u.id;
+  };
+  const superId = await mk("superadmin@bimbel.test", "Pak Owner", "super", "0811-0000-0001");
+  const adminId = await mk("admin@bimbel.test", "Admin Bimbel", "admin", "0811-2233-4455", null, superId);
+  const aulia = await mk("aulia@bimbel.test", "Kak Aulia", "tentor", "0812-1111-2222", "Calistung, SD Umum", superId);
+  const dimas = await mk("dimas@bimbel.test", "Kak Dimas", "tentor", "0813-3333-4444", "ABK, Pendampingan Fokus", superId);
+  const rina = await mk("rina@bimbel.test", "Kak Rina", "tentor", "0856-5555-6666", "Fisika, Matematika SMP", superId);
+  // Contoh kebutuhan "admin sekaligus tentor"
+  await mk("bayu@bimbel.test", "Kak Bayu", "admin_tentor", "0857-7777-8888", "TKA SD, Matematika", superId);
 
   const progs = await db()
     .insert(programs)
@@ -148,7 +167,7 @@ export async function seedDemo(log: (m: string) => void = console.log) {
   }
 
   // invoice contoh lewat service yang sama dengan UI
-  const adminActor: Actor = { id: adminId, role: "admin", status: "aktif", nama: "Admin Bimbel" };
+  const adminActor: Actor = { id: adminId, nama: "Admin Bimbel", status: "aktif", isSuperuser: false, isTutor: false, perms: { invoice: "write" } };
   const sitiIds = sesi.filter((s) => s.studentId === S["Siti Aminah"] && s.status === "hadir").map((s) => s.id);
   const inv1 = await issueInvoice(adminActor, S["Siti Aminah"], P["Kelompok Fisika"], sitiIds.slice(0, 2));
   await issueInvoice(adminActor, S["Siti Aminah"], P["Kelompok Fisika"], sitiIds.slice(2));
@@ -156,7 +175,7 @@ export async function seedDemo(log: (m: string) => void = console.log) {
 
   log(`Seed demo selesai. Password semua akun: ${DEMO_PASSWORD}`);
   log("  superadmin@bimbel.test (Super Admin) | admin@bimbel.test (Admin)");
-  log("  aulia@bimbel.test / dimas@bimbel.test / rina@bimbel.test (Tentor)");
+  log("  aulia@bimbel.test / dimas@bimbel.test / rina@bimbel.test (Tentor) | bayu@bimbel.test (Admin + Tentor)");
   return true;
 }
 
@@ -173,7 +192,7 @@ export async function bootstrapSuperAdmin(log: (m: string) => void = console.log
   const [{ n }] = await db().select({ n: count() }).from(users);
   if (n > 0) return;
   if (password.length < 12) throw new Error("BOOTSTRAP_SUPERADMIN_PASSWORD minimal 12 karakter");
-  await db().insert(users).values({ email, passwordHash: await hashPassword(password), nama: "Super Admin", role: "super_admin" });
+  await db().insert(users).values({ email, passwordHash: await hashPassword(password), nama: "Super Admin", isSuperuser: true });
   log(`Super Admin awal dibuat: ${email}. Hapus BOOTSTRAP_SUPERADMIN_PASSWORD dari .env setelah login.`);
 }
 

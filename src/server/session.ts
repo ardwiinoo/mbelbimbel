@@ -29,7 +29,8 @@ export async function findSessionUser(token: string) {
       email: users.email,
       nama: users.nama,
       noWa: users.noWa,
-      role: users.role,
+      isTutor: users.isTutor,
+      isSuperuser: users.isSuperuser,
       spesialisasi: users.spesialisasi,
       status: users.status,
     })

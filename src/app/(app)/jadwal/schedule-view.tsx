@@ -35,9 +35,10 @@ function wibParts(iso: string) {
 }
 
 export function ScheduleView({
-  isAdmin, me, sessions, filters, tutors, studentPrograms, window: win,
+  perm, me, sessions, filters, tutors, studentPrograms, window: win,
 }: {
-  isAdmin: boolean;
+  /** viewAll = akses Jadwal (Lihat); manage = akses Jadwal (Kelola). */
+  perm: { viewAll: boolean; manage: boolean };
   me: { id: string; nama: string };
   sessions: SessionRow[];
   filters: { from: string; to: string; tutor: string; status: string; student: string };
@@ -78,7 +79,7 @@ export function ScheduleView({
   }, [pageRows]);
 
   const absenButton = (s: SessionRow, big = false) => {
-    if (isAdmin || s.status_kehadiran !== "terjadwal") return null;
+    if (s.tutor_id !== me.id || s.status_kehadiran !== "terjadwal") return null;
     const ok = inWindow(s, win, now);
     const early = now < new Date(s.mulai_at).getTime() - win.buka * 60_000;
     return (
@@ -115,10 +116,10 @@ export function ScheduleView({
   return (
     <div className="space-y-4">
       <Toolbar>
-        <SearchBox value={list.q} onChange={list.setQ} placeholder={isAdmin ? "Cari siswa, tentor, program, atau kelas..." : "Cari siswa atau program..."} />
-        {isAdmin && <Button onClick={() => setCreating(true)}><Plus /> Buat Jadwal</Button>}
+        <SearchBox value={list.q} onChange={list.setQ} placeholder={perm.viewAll ? "Cari siswa, tentor, program, atau kelas..." : "Cari siswa atau program..."} />
+        {perm.manage && <Button onClick={() => setCreating(true)}><Plus /> Buat Jadwal</Button>}
       </Toolbar>
-      {isAdmin && (
+      {perm.viewAll && (
         <div className="rounded-xl border bg-card p-3">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Field label="Dari"><Input type="date" defaultValue={filters.from} onChange={(e) => e.target.value && setFilter("from", e.target.value)} /></Field>
@@ -136,12 +137,12 @@ export function ScheduleView({
       )}
 
       {list.total === 0 ? (
-        <EmptyState title="Tidak ada jadwal" desc={isAdmin ? "Ubah rentang tanggal atau buat jadwal baru." : "Belum ada jadwal les untuk Anda di rentang ini."} />
+        <EmptyState title="Tidak ada jadwal" desc={perm.viewAll ? "Ubah rentang tanggal atau buat jadwal baru." : "Belum ada jadwal les untuk Anda di rentang ini."} />
       ) : (
         <>
-          {isAdmin && (
+          {perm.viewAll && (
             <div className="hidden md:block">
-              <DataTable head={["Waktu Les", "Siswa & Kelas", "Program", "Tentor", "Kehadiran & Bukti", "Tagihan (Admin)", ""]}>
+              <DataTable head={["Waktu Les", "Siswa & Kelas", "Program", "Tentor", "Kehadiran & Bukti", "Tagihan", ""]}>
                 {pageRows.map((s) => (
                   <tr key={s.id}>
                     <Td>
@@ -157,12 +158,15 @@ export function ScheduleView({
                     <Td>{kehadiranCell(s)}</Td>
                     <Td>{tagihanCell(s)}</Td>
                     <Td>
-                      {s.status_tagihan === "belum_rekap" && (
-                        <div className="flex gap-1">
-                          <Button size="icon-sm" variant="ghost" aria-label="Edit" onClick={() => setEditing(s)}><Pencil /></Button>
-                          <Button size="icon-sm" variant="ghost" aria-label="Ubah kehadiran" onClick={() => setOverriding(s)}><ShieldCheck /></Button>
-                        </div>
-                      )}
+                      <div className="flex flex-col items-start gap-1.5">
+                        {absenButton(s)}
+                        {perm.manage && s.status_tagihan === "belum_rekap" && (
+                          <div className="flex gap-1">
+                            <Button size="icon-sm" variant="ghost" aria-label="Edit" onClick={() => setEditing(s)}><Pencil /></Button>
+                            <Button size="icon-sm" variant="ghost" aria-label="Ubah kehadiran" onClick={() => setOverriding(s)}><ShieldCheck /></Button>
+                          </div>
+                        )}
+                      </div>
                     </Td>
                   </tr>
                 ))}
@@ -170,7 +174,7 @@ export function ScheduleView({
             </div>
           )}
 
-          <div className={isAdmin ? "space-y-5 md:hidden" : "space-y-5"}>
+          <div className={perm.viewAll ? "space-y-5 md:hidden" : "space-y-5"}>
             {groups.map(([day, daySessions]) => (
               <section key={day} className="space-y-2">
                 <h2 className="text-sm font-semibold text-muted-foreground">{tanggal(daySessions[0].mulai_at)}</h2>
@@ -183,14 +187,14 @@ export function ScheduleView({
                             <Clock className="size-4" /> {jam(s.mulai_at)} - {jam(s.selesai_at)}
                           </p>
                           <p className="mt-1 font-semibold">{s.students?.nama} <span className="font-normal text-muted-foreground">• {s.students?.kelas}</span></p>
-                          <p className="text-sm text-muted-foreground">{s.programs?.nama}{isAdmin && ` • ${s.profiles?.nama}`}</p>
+                          <p className="text-sm text-muted-foreground">{s.programs?.nama}{perm.viewAll && ` • ${s.profiles?.nama}`}</p>
                         </div>
-                        {isAdmin && tagihanCell(s)}
+                        {perm.viewAll && tagihanCell(s)}
                       </div>
                       {kehadiranCell(s)}
                       {s.absen_at && <p className="text-xs text-muted-foreground">Absen: {tanggalJam(s.absen_at)} WIB (waktu server)</p>}
                       {absenButton(s, true)}
-                      {isAdmin && s.status_tagihan === "belum_rekap" && (
+                      {perm.manage && s.status_tagihan === "belum_rekap" && (
                         <div className="flex gap-2">
                           <Button size="sm" variant="outline" onClick={() => setEditing(s)}><Pencil /> Edit</Button>
                           <Button size="sm" variant="outline" onClick={() => setOverriding(s)}><ShieldCheck /> Kehadiran</Button>

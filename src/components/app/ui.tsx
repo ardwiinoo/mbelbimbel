@@ -4,10 +4,10 @@ import { Inbox } from "lucide-react";
 
 export function PageHeader({ title, desc, actions }: { title: string; desc?: string; actions?: ReactNode }) {
   return (
-    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <h1 className="text-xl font-bold tracking-tight md:text-2xl">{title}</h1>
-        {desc && <p className="mt-1 text-sm text-muted-foreground">{desc}</p>}
+    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0">
+        <h1 className="text-[1.375rem] leading-tight font-bold tracking-tight text-foreground md:text-[1.75rem]">{title}</h1>
+        {desc && <p className="mt-1.5 max-w-2xl text-[0.9375rem] leading-relaxed text-muted-foreground">{desc}</p>}
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
     </div>

@@ -1,5 +1,6 @@
 import { requireProfile } from "@/lib/auth";
-import { ROLE_LABEL } from "@/lib/roles";
+import { accountLabel, levelOf, MODULES } from "@/lib/access";
+import { Pill } from "@/components/app/ui";
 import { tanggal } from "@/lib/format";
 import { PageHeader } from "@/components/app/ui";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,7 +22,7 @@ export default async function ProfilPage() {
           <CardHeader>
             <CardTitle>{p.nama}</CardTitle>
             <CardDescription>
-              {ROLE_LABEL[p.role]}
+              {accountLabel(p)}
               {p.spesialisasi && ` • ${p.spesialisasi}`} • terdaftar {tanggal(p.createdAt, false)}
             </CardDescription>
           </CardHeader>
@@ -32,6 +33,27 @@ export default async function ProfilPage() {
             <p>
               <span className="text-muted-foreground">No. WhatsApp:</span> {p.noWa ?? "-"}
             </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Akses Saya</CardTitle>
+            <CardDescription>
+              {p.isSuperuser ? "Super Admin: semua akses, termasuk kelola akun." : "Diatur oleh pengelola akun. Hubungi admin bila butuh akses tambahan."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-1.5">
+            {p.isTutor && <Pill color="blue">Mengajar (tentor)</Pill>}
+            {MODULES.map((m) => {
+              const lv = levelOf(p, m.key);
+              return lv ? (
+                <Pill key={m.key} color={lv === "write" ? "green" : "gray"}>
+                  {m.label}: {lv === "write" ? "Kelola" : "Lihat"}
+                </Pill>
+              ) : null;
+            })}
+            {!p.isTutor && !p.isSuperuser && !Object.keys(p.perms).length && <span className="text-sm text-muted-foreground">Belum ada akses.</span>}
           </CardContent>
         </Card>
 

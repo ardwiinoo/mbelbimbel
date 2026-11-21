@@ -166,3 +166,15 @@ export function ServerPager({ total, page, pageSize = PAGE_SIZE }: { total: numb
 export function Toolbar({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cn("flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center", className)}>{children}</div>;
 }
+
+/** Baris filter: di HP bisa digeser horizontal (teks dropdown tidak terpotong), di desktop sebaris. */
+export function FilterRow({ children }: { children: ReactNode }) {
+  return (
+    <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none] sm:mx-0 sm:overflow-visible sm:px-0 [&::-webkit-scrollbar]:hidden">
+      {children}
+    </div>
+  );
+}
+
+/** Kelas ukuran dropdown filter yang konsisten (lebar mengikuti isi di HP). */
+export const filterSelectClass = "w-auto min-w-[9.5rem] shrink-0 sm:w-44";

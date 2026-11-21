@@ -6,12 +6,20 @@ import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { tanggal, tanggalJam } from "@/lib/format";
 import { FormDialog, Field } from "@/components/app/form-dialog";
 import { saveStudent, type StudentInput } from "./actions";
 import type { StudentRow } from "./students-view";
 import { AppSelect } from "@/components/app/app-select";
 
 type Opt = { id: string; nama: string };
+
+/** "Dibuat 21 Nov 2026 oleh Admin • diubah 22 Nov 2026 (10.15) oleh Kak Bayu" */
+function auditText(a: StudentRow["audit"]) {
+  const parts = [`Dibuat ${tanggal(a.created_at, false)}${a.created_by ? ` oleh ${a.created_by}` : ""}`];
+  if (a.updated_at) parts.push(`diubah ${tanggalJam(a.updated_at)}${a.updated_by ? ` oleh ${a.updated_by}` : ""}`);
+  return parts.join(" • ");
+}
 
 type FormValues = Omit<StudentInput, "programs"> & {
   programs: { program_id: string; tutor_id: string }[];
@@ -60,7 +68,12 @@ export function StudentDialog({
     });
 
   return (
-    <FormDialog title={student ? "Edit Siswa" : "Tambah Siswa"} onClose={onClose} wide>
+    <FormDialog
+      title={student ? "Edit Siswa" : "Tambah Siswa"}
+      desc={student ? auditText(student.audit) : undefined}
+      onClose={onClose}
+      wide
+    >
       <form onSubmit={handleSubmit(onSubmit)} className="grid gap-3 sm:grid-cols-2">
         <Field label="Nama lengkap *" className="sm:col-span-2">
           <Input {...register("nama", { required: true })} />
