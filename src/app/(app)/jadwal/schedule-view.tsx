@@ -16,6 +16,7 @@ import { createSessions, updateSession, setAttendanceStatus } from "./actions";
 import { CameraAttendance } from "./camera-attendance";
 import type { StudentProgramOpt } from "./page";
 import type { SessionRow } from "@/server/services/sessions";
+import { DatePicker, TimePicker } from "@/components/app/date-picker";
 
 export type { SessionRow };
 
@@ -122,8 +123,8 @@ export function ScheduleView({
       {perm.viewAll && (
         <div className="rounded-xl border bg-card p-3">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Field label="Dari"><Input type="date" defaultValue={filters.from} onChange={(e) => e.target.value && setFilter("from", e.target.value)} /></Field>
-            <Field label="Sampai"><Input type="date" defaultValue={filters.to} onChange={(e) => e.target.value && setFilter("to", e.target.value)} /></Field>
+            <Field label="Dari"><DatePicker aria-label="Dari tanggal" value={filters.from} max={filters.to || undefined} onChange={(v) => v && setFilter("from", v)} /></Field>
+            <Field label="Sampai"><DatePicker aria-label="Sampai tanggal" value={filters.to} min={filters.from || undefined} onChange={(v) => v && setFilter("to", v)} /></Field>
             <Field label="Tentor">
               <AppSelect value={filters.tutor} onChange={(v) => setFilter("tutor", v)} aria-label="Tentor"
                 options={[{ value: "", label: "Semua tentor" }, ...tutors.map((t) => ({ value: t.id, label: t.nama }))]} />
@@ -256,12 +257,12 @@ function CreateDialog({ tutors, studentPrograms, onClose }: { tutors: { id: stri
         <Field label="Tentor *" className="sm:col-span-2" hint="Otomatis terisi tentor pengampu, bisa diganti.">
           <AppSelect value={tutorId} onChange={setTutorId} placeholder="Pilih tentor" options={tutors.map((t) => ({ value: t.id, label: t.nama }))} />
         </Field>
-        <Field label="Tanggal *"><Input type="date" value={tgl} onChange={(e) => setTgl(e.target.value)} /></Field>
+        <Field label="Tanggal *"><DatePicker value={tgl} onChange={setTgl} /></Field>
         <Field label="Ulang mingguan" hint="Jumlah minggu (1 = sekali)">
           <Input type="number" min={1} max={12} value={ulang} onChange={(e) => setUlang(Number(e.target.value))} />
         </Field>
-        <Field label="Jam mulai (WIB)"><Input type="time" value={mulai} onChange={(e) => setMulai(e.target.value)} /></Field>
-        <Field label="Jam selesai (WIB)"><Input type="time" value={selesai} onChange={(e) => setSelesai(e.target.value)} /></Field>
+        <Field label="Jam mulai (WIB)"><TimePicker aria-label="Jam mulai" value={mulai} onChange={setMulai} /></Field>
+        <Field label="Jam selesai (WIB)"><TimePicker aria-label="Jam selesai" value={selesai} onChange={setSelesai} /></Field>
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onClose}>Batal</Button>
@@ -291,9 +292,9 @@ function EditDialog({ s, tutors, onClose }: { s: SessionRow; tutors: { id: strin
         <Field label="Tentor" className="sm:col-span-3">
           <AppSelect value={tutorId} onChange={setTutorId} options={tutors.map((t) => ({ value: t.id, label: t.nama }))} />
         </Field>
-        <Field label="Tanggal"><Input type="date" value={tgl} onChange={(e) => setTgl(e.target.value)} /></Field>
-        <Field label="Mulai"><Input type="time" value={mulai} onChange={(e) => setMulai(e.target.value)} /></Field>
-        <Field label="Selesai"><Input type="time" value={selesai} onChange={(e) => setSelesai(e.target.value)} /></Field>
+        <Field label="Tanggal"><DatePicker value={tgl} onChange={setTgl} /></Field>
+        <Field label="Mulai"><TimePicker aria-label="Jam mulai" value={mulai} onChange={setMulai} /></Field>
+        <Field label="Selesai"><TimePicker aria-label="Jam selesai" value={selesai} onChange={setSelesai} /></Field>
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onClose}>Batal</Button>

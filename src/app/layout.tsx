@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
+import { ConfirmHost } from "@/components/app/confirm";
 import { SwRegister } from "@/components/sw-register";
 import "./globals.css";
 
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         {children}
         <Toaster richColors position="top-center" />
+        <ConfirmHost />
         <SwRegister />
       </body>
     </html>
