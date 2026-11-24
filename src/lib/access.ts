@@ -9,6 +9,7 @@ export const MODULES = [
   { key: "laporan", label: "Laporan", read: "Lihat semua laporan", write: "Edit semua laporan" },
   { key: "materi", label: "Bank Materi", read: "Lihat & unduh materi", write: "Upload, edit, hapus materi" },
   { key: "invoice", label: "Invoice", read: "Lihat invoice & nota", write: "Terbitkan invoice & tandai lunas" },
+  { key: "honor", label: "Honor Tentor", read: "Lihat honor & slip tentor", write: "Atur tunjangan, tarif honor & tandai lunas honor" },
   { key: "pengaturan", label: "Pengaturan", read: "Lihat pengaturan", write: "Ubah pengaturan" },
   { key: "pengguna", label: "Pengguna & Akses", read: "Lihat daftar akun", write: "Buat akun, ubah akses, reset password" },
 ] as const;
@@ -48,20 +49,20 @@ export const PRESETS: { key: string; label: string; isTutor: boolean; perms: Per
     key: "admin",
     label: "Admin",
     isTutor: false,
-    perms: { siswa: "write", asesmen: "write", tentor: "write", jadwal: "write", laporan: "write", materi: "write", invoice: "write", pengaturan: "write" },
+    perms: { siswa: "write", asesmen: "write", tentor: "write", jadwal: "write", laporan: "write", materi: "write", invoice: "write", honor: "write", pengaturan: "write" },
   },
   { key: "tentor", label: "Tentor", isTutor: true, perms: { materi: "read" } },
   {
     key: "admin_tentor",
     label: "Admin + Tentor",
     isTutor: true,
-    perms: { siswa: "write", asesmen: "write", tentor: "write", jadwal: "write", laporan: "write", materi: "write", invoice: "write", pengaturan: "write" },
+    perms: { siswa: "write", asesmen: "write", tentor: "write", jadwal: "write", laporan: "write", materi: "write", invoice: "write", honor: "write", pengaturan: "write" },
   },
   {
     key: "keuangan",
     label: "Keuangan",
     isTutor: false,
-    perms: { siswa: "read", invoice: "write", jadwal: "read" },
+    perms: { siswa: "read", invoice: "write", honor: "write", jadwal: "read" },
   },
   {
     key: "lihat",

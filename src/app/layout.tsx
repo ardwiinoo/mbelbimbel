@@ -13,6 +13,7 @@ export const metadata: Metadata = {
   applicationName: "Bimbel App",
   appleWebApp: { capable: true, title: "Bimbel", statusBarStyle: "default" },
   icons: {
+    // Halaman login & aplikasi menimpa ini dengan logo dari Pengaturan (lihat generateMetadata di sana)
     icon: [{ url: "/icons/icon-192.png", sizes: "192x192" }],
     apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
   },
@@ -27,8 +28,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="id" className={`${sans.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">
+    // suppressHydrationWarning: ekstensi browser (Tag Assistant, Grammarly, dsb.) menyuntik atribut
+    // ke <html>/<body> sebelum React hydrate. Hanya berlaku satu tingkat (atribut tag ini), bukan anaknya.
+    <html lang="id" className={`${sans.variable} h-full antialiased`} suppressHydrationWarning>
+      <body className="min-h-full flex flex-col" suppressHydrationWarning>
         {children}
         <Toaster richColors position="top-center" />
         <ConfirmHost />

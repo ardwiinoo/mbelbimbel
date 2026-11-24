@@ -4,7 +4,7 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-export type SelectOption = { value: string; label: string };
+export type SelectOption = { value: string; label: string; /** Titik warna di depan label (mis. kategori mapel). */ dot?: string };
 
 // Base UI memakai null untuk "belum dipilih"; nilai "" kita petakan ke token khusus
 // supaya opsi seperti "Semua program" tetap bisa dipilih & ditampilkan.
@@ -31,7 +31,17 @@ export function AppSelect({
   id?: string;
   "aria-label"?: string;
 }) {
-  const items = options.map((o) => ({ value: toInner(o.value), label: o.label }));
+  const items = options.map((o) => ({
+    value: toInner(o.value),
+    label: o.dot ? (
+      <span className="flex items-center gap-2">
+        <span className="size-2.5 shrink-0 rounded-full" style={{ background: o.dot }} aria-hidden />
+        {o.label}
+      </span>
+    ) : (
+      o.label
+    ),
+  }));
   const hasValue = options.some((o) => o.value === value);
   return (
     <Select

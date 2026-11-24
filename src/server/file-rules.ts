@@ -2,7 +2,7 @@
 // (magic bytes) + ekstensi, bukan dari Content-Type kiriman browser.
 import { UserError } from "./authz";
 
-export type FileKind = "assessment" | "attendance" | "report" | "material";
+export type FileKind = "assessment" | "attendance" | "report" | "material" | "signature" | "logo";
 
 type FileType = { ext: string; mime: string; magic: (b: Uint8Array) => boolean };
 
@@ -27,6 +27,8 @@ export const FILE_RULES: Record<FileKind, { types: FileType[]; maxBytes: number;
   attendance: { types: [JPG], maxBytes: 2 * MB, label: "foto JPEG maks 2 MB" },
   report: { types: [PDF], maxBytes: 10 * MB, label: "PDF maks 10 MB" },
   material: { types: [PDF, JPG, PNG, ...OFFICE], maxBytes: 25 * MB, label: "PDF/gambar/Office maks 25 MB" },
+  signature: { types: [PNG, JPG], maxBytes: 2 * MB, label: "gambar PNG/JPG maks 2 MB" },
+  logo: { types: [PNG, JPG], maxBytes: 2 * MB, label: "gambar PNG/JPG maks 2 MB" },
 };
 
 /** Batas terbesar dari semua jenis (dipakai untuk menolak body terlalu besar lebih awal). */

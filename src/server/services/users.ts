@@ -5,6 +5,7 @@ import { db, type DB, type Tx } from "@/db";
 import { auditLog, sessions, userPermissions, users } from "@/db/schema";
 import { can, isModule, MODULES, withinGrantorAccess, type Module, type Permissions } from "@/lib/access";
 import { assertActive, assertCan, ForbiddenError, loadPermissions, UserError, type Actor } from "../authz";
+import { detachFileRow, purgeStoredFiles, withUploadedFile } from "../files";
 import { dummyVerify, hashPassword, verifyPassword } from "../password";
 import { deleteUserSessions } from "../session";
 
@@ -330,8 +331,47 @@ export async function changeOwnPassword(actor: Actor | null, currentPassword: st
 export async function getOwnProfile(actor: Actor) {
   assertActive(actor);
   const [u] = await db()
-    .select({ email: users.email, nama: users.nama, noWa: users.noWa, spesialisasi: users.spesialisasi, createdAt: users.createdAt })
+    .select({ email: users.email, nama: users.nama, noWa: users.noWa, spesialisasi: users.spesialisasi, createdAt: users.createdAt, ttdFileId: users.ttdFileId })
     .from(users)
     .where(eq(users.id, actor.id));
   return { ...u, isTutor: actor.isTutor, isSuperuser: actor.isSuperuser, perms: actor.perms };
+}
+
+/**
+ * Unggah / hapus gambar tanda tangan sendiri (dicetak di slip honor yang akun ini tandai lunas).
+ * Hanya untuk akun dengan akses Honor Tentor. File lama dihapus dari disk saat diganti.
+ */
+export async function saveSignature(actor: Actor | null, input: { file: File | null; hapus: boolean }) {
+  assertCan(actor, "honor", "read");
+  const hasFile = !!input.file && input.file.size > 0;
+  if (!hasFile && !input.hapus) throw new UserError("Pilih gambar tanda tangan");
+  const write = async (tx: Tx, fileId?: string) => {
+    const [cur] = await tx.select({ ttd: users.ttdFileId }).from(users).where(eq(users.id, actor.id)).for("update");
+    await tx.update(users).set({ ttdFileId: fileId ?? null }).where(eq(users.id, actor.id));
+    return detachFileRow(tx, cur?.ttd);
+  };
+  const oldKey = hasFile ? await withUploadedFile("signature", input.file, actor, write) : await db().transaction((tx) => write(tx));
+  await purgeStoredFiles([oldKey]);
+  return hasFile ? "Tanda tangan disimpan" : "Tanda tangan dihapus";
+}
+
+const ownProfileSchema = z.object({
+  nama: z.string().trim().min(2, "Nama minimal 2 huruf").max(100, "Nama maksimal 100 karakter"),
+  no_wa: z
+    .string()
+    .trim()
+    .max(30, "Nomor terlalu panjang")
+    .refine((v) => !v || /^[0-9+()\s-]+$/.test(v), "Nomor hanya boleh berisi angka, spasi, +, - dan tanda kurung")
+    .refine((v) => !v || v.replace(/\D/g, "").length >= 8, "Nomor WhatsApp minimal 8 digit")
+    .transform((v) => v || null),
+});
+
+/** Ubah nama & nomor WhatsApp akun sendiri (tanpa verifikasi; email & password punya alurnya sendiri). */
+export async function changeOwnProfile(actor: Actor | null, input: z.input<typeof ownProfileSchema>) {
+  assertActive(actor);
+  const p = ownProfileSchema.safeParse(input);
+  if (!p.success) throw new UserError(p.error.issues[0].message);
+  await db().update(users).set({ nama: p.data.nama, noWa: p.data.no_wa, updatedAt: new Date(), updatedBy: actor.id }).where(eq(users.id, actor.id));
+  await db().insert(auditLog).values({ actorId: actor.id, aksi: "ubah_profil", target: actor.id, detail: { nama: p.data.nama } });
+  return "Profil diperbarui";
 }

@@ -13,6 +13,8 @@ const updaterUser = alias(users, "updater_user");
 export type StudentRow = {
   id: string;
   nama: string;
+  /** Nama panggilan (opsional). Tampilan: panggilan ?? nama. */
+  panggilan: string | null;
   tanggal_lahir: string | null;
   kelas: string | null;
   sekolah: string | null;
@@ -37,6 +39,7 @@ export type StudentRow = {
  * Daftar siswa sesuai hak akses (pengganti RLS students/student_programs):
  * - akses Data Siswa (Lihat): semua siswa + semua program (+ asesmen bila punya akses Asesmen)
  * - tentor: hanya siswa yang ia ampu, hanya baris program miliknya, TANPA asesmen
+ *   dan TANPA data pribadi (alamat, sekolah, tanggal lahir, kontak orang tua) — hanya nama, kelas & program.
  */
 export async function listStudents(actor: Actor): Promise<StudentRow[]> {
   const admin = scopeOf(actor, "siswa") === "all"; // "own" = tentor: hanya siswa yang diampu
@@ -97,12 +100,13 @@ export async function listStudents(actor: Actor): Promise<StudentRow[]> {
   return studentRows.map((s) => ({
     id: s.id,
     nama: s.nama,
-    tanggal_lahir: s.tanggalLahir,
+    panggilan: s.panggilan,
+    tanggal_lahir: admin ? s.tanggalLahir : null,
     kelas: s.kelas,
-    sekolah: s.sekolah,
-    alamat: s.alamat,
-    ortu_nama: s.ortuNama,
-    ortu_wa: s.ortuWa,
+    sekolah: admin ? s.sekolah : null,
+    alamat: admin ? s.alamat : null,
+    ortu_nama: admin ? s.ortuNama : null,
+    ortu_wa: admin ? s.ortuWa : null,
     status: s.status,
     audit: { created_at: s.createdAt.toISOString(), created_by: s.cNama, updated_at: s.updatedAt?.toISOString() ?? null, updated_by: s.uNama },
     student_programs: spRows
@@ -128,6 +132,7 @@ const opt = z.string().trim().optional().transform((v) => v || null);
 export const studentSchema = z.object({
   id: z.string().uuid().optional(),
   nama: z.string().trim().min(2, "Nama minimal 2 huruf"),
+  panggilan: opt,
   tanggal_lahir: opt,
   kelas: opt,
   sekolah: opt,
@@ -148,6 +153,7 @@ export async function saveStudent(actor: Actor | null, input: StudentInput) {
   const { id, programs: progs, ...v } = parsed.data;
   const data = {
     nama: v.nama,
+    panggilan: v.panggilan,
     tanggalLahir: v.tanggal_lahir,
     kelas: v.kelas,
     sekolah: v.sekolah,

@@ -29,6 +29,20 @@
       "when": 1795267169771,
       "tag": "0003_hapus_role",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795526264881,
+      "tag": "0004_mapel_honor_siswa_absen",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795526568929,
+      "tag": "0005_catat_pelaku",
+      "breakpoints": true
     }
   ]
 }

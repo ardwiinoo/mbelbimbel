@@ -29,6 +29,11 @@ export function tanggalJam(d: string | Date | null | undefined) {
   return `${tanggal(d, false)} (${jam(d)})`;
 }
 
+/** Nama yang ditampilkan untuk siswa: panggilan bila ada, selain itu nama lengkap. */
+export function siswaLabel(s: { nama: string; panggilan?: string | null } | null | undefined) {
+  return s?.panggilan?.trim() || s?.nama || "-";
+}
+
 export function umur(tglLahir: string | null | undefined) {
   if (!tglLahir) return null;
   const b = new Date(tglLahir);

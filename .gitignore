@@ -44,3 +44,6 @@ next-env.d.ts
 PRD Sistem Manajemen & Invoice Bimbel (PWA).md
 # file upload lokal (di server: volume Docker)
 /uploads/
+
+# Catatan pribadi lokal (akun login demo) - jangan di-push
+AKUN-LOGIN-LOCAL.md

@@ -26,7 +26,7 @@ export default async function SiswaPage() {
     <>
       <PageHeader
         title={perm.viewAll ? "Data Siswa" : "Siswa Bimbingan Saya"}
-        desc={perm.viewAll ? "Master biodata siswa, program, tentor pengampu, dan dokumen asesmen ABK." : "Siswa yang Anda ampu beserta kontak orang tua."}
+        desc={perm.viewAll ? "Master biodata siswa, program, tentor pengampu, dan dokumen asesmen ABK." : "Siswa yang Anda ampu beserta program dan jadwalnya."}
       />
       <StudentsView perm={perm} students={students} programs={programs} tutors={tutors} />
     </>

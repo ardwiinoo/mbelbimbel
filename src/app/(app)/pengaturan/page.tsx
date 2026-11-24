@@ -11,7 +11,7 @@ export default async function PengaturanPage() {
   return (
     <>
       <PageHeader title="Pengaturan" desc="Identitas bimbel, info pembayaran di nota, kontak admin, dan aturan absen." />
-      <SettingsForm s={settings} readOnly={!can(me, "pengaturan", "write")} />
+      <SettingsForm s={settings} readOnly={!can(me, "pengaturan", "write")} canLogo={can(me, "pengaturan", "write") || can(me, "invoice", "write") || can(me, "honor", "write")} />
     </>
   );
 }

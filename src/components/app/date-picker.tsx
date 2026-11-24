@@ -2,7 +2,7 @@
 // Pemilih tanggal & jam custom (pengganti <input type="date|time"> bawaan browser).
 // Nilai tetap string yang sama dengan input bawaan: tanggal "YYYY-MM-DD", jam "HH:MM",
 // jadi server action & validasi tidak perlu diubah.
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { CalendarDays, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { AppSelect } from "@/components/app/app-select";
@@ -17,6 +17,19 @@ const iso = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d)}`;
 function parse(v: string) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
   return m ? { y: +m[1], m: +m[2] - 1, d: +m[3] } : null;
+}
+const toDmy = (v: string) => {
+  const p = parse(v);
+  return p ? `${pad(p.d)}/${pad(p.m + 1)}/${p.y}` : "";
+};
+/** "14/03/2018" → "2018-03-14"; null bila bukan tanggal yang nyata. */
+function fromDmy(t: string) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(t);
+  if (!m) return null;
+  const [d, mo, y] = [+m[1], +m[2], +m[3]];
+  if (y < 1900 || y > 2100) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d ? iso(y, mo - 1, d) : null;
 }
 /** Hari ini menurut WIB (aplikasi memakai WIB di semua tempat). */
 function todayWib() {
@@ -44,6 +57,7 @@ export function DatePicker({
   max,
   placeholder = "Pilih tanggal",
   clearable = false,
+  typeable = false,
   id,
   className,
   "aria-label": ariaLabel,
@@ -55,6 +69,8 @@ export function DatePicker({
   placeholder?: string;
   /** Tampilkan tombol hapus (untuk field opsional, mis. tanggal lahir). */
   clearable?: boolean;
+  /** Bisa diketik langsung (DD/MM/YYYY) selain memilih dari kalender — berguna untuk tanggal lahir. */
+  typeable?: boolean;
   id?: string;
   className?: string;
   "aria-label"?: string;
@@ -64,6 +80,9 @@ export function DatePicker({
   const start = parse(value) ?? parse(today)!;
   const [cursor, setCursor] = useState({ y: start.y, m: start.m });
   const [view, setView] = useState<View>("day");
+  // Mode ketik: null = tidak sedang mengetik (tampilkan nilai terpilih); string = teks yang sedang diketik
+  const [text, setText] = useState<string | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
 
   function onOpenChange(o: boolean) {
     setOpen(o);
@@ -77,8 +96,19 @@ export function DatePicker({
   const pick = (d: string) => {
     if (disabled(d)) return;
     onChange(d);
+    setText(null);
     setOpen(false);
   };
+  function onType(raw: string) {
+    const digits = raw.replace(/\D/g, "").slice(0, 8);
+    const f = digits.length > 4 ? `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}` : digits.length > 2 ? `${digits.slice(0, 2)}/${digits.slice(2)}` : digits;
+    setText(f);
+    if (!digits.length) return onChange("");
+    const v = digits.length === 8 ? fromDmy(f) : null;
+    if (v && !disabled(v)) onChange(v);
+  }
+  const typedFull = text !== null && text.replace(/\D/g, "").length === 8;
+  const typedInvalid = typedFull && !(fromDmy(text!) && !disabled(fromDmy(text!)!));
   const shift = (n: number) =>
     setCursor((c) => {
       const t = c.y * 12 + c.m + n;
@@ -101,7 +131,30 @@ export function DatePicker({
 
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
-      <div className={cn("@container relative", className)}>
+      <div ref={wrapRef} className={cn("@container relative", className)}>
+        {typeable ? (
+          <>
+            <input
+              id={id}
+              aria-label={ariaLabel}
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder={placeholder}
+              maxLength={10}
+              value={text ?? toDmy(value)}
+              onChange={(e) => onType(e.target.value)}
+              onBlur={() => setText(null)}
+              aria-invalid={typedInvalid || undefined}
+              className="h-9 w-full min-w-0 rounded-lg border border-input bg-background px-3 pr-10 text-base tabular-nums outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm"
+            />
+            <Popover.Trigger
+              aria-label="Buka kalender"
+              className="absolute top-1/2 right-1.5 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground data-[popup-open]:bg-muted"
+            >
+              <CalendarDays className="size-4" />
+            </Popover.Trigger>
+          </>
+        ) : (
         <Popover.Trigger
           id={id}
           aria-label={ariaLabel}
@@ -113,7 +166,8 @@ export function DatePicker({
           <CalendarDays className="size-4 shrink-0 text-muted-foreground" />
           <span className={cn("truncate", !value && "text-muted-foreground")}>{value ? label(value) : placeholder}</span>
         </Popover.Trigger>
-        {clearable && value && (
+        )}
+        {!typeable && clearable && value && (
           <button
             type="button"
             aria-label="Kosongkan tanggal"
@@ -125,7 +179,7 @@ export function DatePicker({
         )}
       </div>
       <Popover.Portal>
-        <Popover.Positioner sideOffset={6} align="start" className="z-[60]">
+        <Popover.Positioner sideOffset={6} align="start" anchor={typeable ? wrapRef : undefined} className="z-[60]">
           <Popover.Popup className="w-[18.5rem] origin-[var(--transform-origin)] rounded-xl border bg-popover p-3 text-popover-foreground shadow-lg outline-none transition-[opacity,transform] duration-100 data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0">
             {/* Header: navigasi + judul yang bisa diklik untuk pindah tampilan bulan/tahun */}
             <div className="mb-2 flex items-center justify-between gap-1">

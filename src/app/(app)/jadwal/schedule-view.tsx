@@ -2,32 +2,41 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Camera, MapPin, Pencil, ShieldCheck, Clock, Image as ImageIcon } from "lucide-react";
+import { AlertTriangle, Camera, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { DataTable, Td, Pill, EmptyState, KEHADIRAN } from "@/components/app/ui";
 import { FormDialog, Field } from "@/components/app/form-dialog";
-import { Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
 import { AppSelect } from "@/components/app/app-select";
-import { fileHref } from "@/components/app/file-link";
-import { tanggal, jam, tanggalJam, TZ } from "@/lib/format";
-import { createSessions, updateSession, setAttendanceStatus } from "./actions";
+import { tanggal, jam, siswaLabel } from "@/lib/format";
+import { checkSessionConflicts, createSessions, updateSession, setAttendanceStatus } from "./actions";
+import { findAllConflicts, KIND_LABEL, type Slot } from "@/lib/session-conflicts";
 import { CameraAttendance } from "./camera-attendance";
 import type { StudentProgramOpt } from "./page";
-import type { SessionRow } from "@/server/services/sessions";
+import type { ConflictInfo, SessionRow, TimelineTutor } from "@/server/services/sessions";
 import { DatePicker, TimePicker } from "@/components/app/date-picker";
+import { shiftAnchor, type TimelineView } from "@/lib/timeline-range";
+import { Timeline, type TimelineNavState } from "./timeline";
+import { SessionDetail } from "./session-detail";
+import { cn } from "@/lib/utils";
 
 export type { SessionRow };
 
-type Win = { buka: number; tutup: number };
-
-const sessionSearchText = (s: SessionRow) =>
-  `${s.students?.nama} ${s.students?.kelas ?? ""} ${s.programs?.nama} ${s.profiles?.nama} ${KEHADIRAN[s.status_kehadiran].label}`;
+type Win = { buka: number; tutup: number; /** absen susulan tanpa batas waktu */ bebas: boolean };
 
 function inWindow(s: SessionRow, w: Win, now: number) {
-  return now >= new Date(s.mulai_at).getTime() - w.buka * 60_000 && now <= new Date(s.selesai_at).getTime() + w.tutup * 60_000;
+  return now >= new Date(s.mulai_at).getTime() - w.buka * 60_000 && (w.bebas || now <= new Date(s.selesai_at).getTime() + w.tutup * 60_000);
 }
+
+const toSlot = (s: SessionRow): Slot => ({
+  id: s.id,
+  tutorId: s.tutor_id,
+  studentId: s.students?.id ?? "",
+  programId: s.programs?.id ?? "",
+  start: new Date(s.mulai_at).getTime(),
+  end: new Date(s.selesai_at).getTime(),
+  cancelled: s.status_kehadiran === "batal",
+});
 
 /** "YYYY-MM-DD" & "HH:mm" WIB dari ISO, untuk form edit */
 function wibParts(iso: string) {
@@ -36,48 +45,48 @@ function wibParts(iso: string) {
 }
 
 export function ScheduleView({
-  perm, me, sessions, filters, tutors, studentPrograms, window: win,
+  perm, me, sessions, nav, counts, tutors, studentPrograms, window: win, serverNow,
 }: {
-  /** viewAll = akses Jadwal (Lihat); manage = akses Jadwal (Kelola). */
+  /** Waktu server saat render: nilai awal jam supaya HTML server & klien identik (tanpa hydration mismatch). */
+  serverNow: number;
+  /** viewAll = akses Jadwal (Lihat) → semua tentor; selain itu (tentor) hanya jadwalnya sendiri. manage = akses Jadwal (Kelola). */
   perm: { viewAll: boolean; manage: boolean };
   me: { id: string; nama: string };
   sessions: SessionRow[];
-  filters: { from: string; to: string; tutor: string; status: string; student: string };
-  tutors: { id: string; nama: string }[];
+  /** Rentang & mode Resource Timeline. */
+  nav: TimelineNavState;
+  /** Jumlah sesi per tentor pada bulan yang sedang dilihat. */
+  counts: Record<string, number>;
+  tutors: TimelineTutor[];
   studentPrograms: StudentProgramOpt[];
   window: Win;
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [now, setNow] = useState(() => Date.now());
-  const [creating, setCreating] = useState(false);
+  const [navPending, startNav] = useTransition();
+  const [now, setNow] = useState(serverNow);
+  const [creating, setCreating] = useState<{ tutorId?: string; tgl?: string } | null>(null);
   const [editing, setEditing] = useState<SessionRow | null>(null);
   const [overriding, setOverriding] = useState<SessionRow | null>(null);
   const [attending, setAttending] = useState<SessionRow | null>(null);
-  const [photo, setPhoto] = useState<SessionRow | null>(null);
+  const [detail, setDetail] = useState<SessionRow | null>(null);
+  const activeTutors = useMemo(() => tutors.filter((t) => t.aktif), [tutors]);
+  // Bentrok jadwal pada data yang sedang tampil (tentor/siswa sama, waktu beririsan; kelas kelompok dikecualikan)
+  const sessionById = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions]);
+  const conflictMap = useMemo(() => findAllConflicts(sessions.map(toSlot)), [sessions]);
+  const conflictIds = useMemo(() => new Set(conflictMap.keys()), [conflictMap]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
   }, []);
 
-  function setFilter(k: string, v: string) {
-    const q = new URLSearchParams({ ...filters, [k]: v });
-    [...q.entries()].forEach(([key, val]) => !val && q.delete(key));
-    router.push(`${pathname}?${q}`);
+  /** Ganti mode (minggu/bulan), geser periode, atau loncat ke tanggal tertentu. */
+  function navigate(p: { view?: TimelineView; tgl?: string; dir?: 1 | -1 }) {
+    const view = p.view ?? nav.view;
+    const anchor = p.dir ? shiftAnchor(view, nav.anchor, p.dir) : (p.tgl ?? nav.anchor);
+    startNav(() => router.push(`${pathname}?view=${view}&tgl=${anchor}`));
   }
-
-  // Cari (siswa/tentor/program/kelas) + paging, lalu kelompokkan per tanggal untuk kartu
-  const list = useClientList(sessions, sessionSearchText);
-  const pageRows = list.rows;
-  const groups = useMemo(() => {
-    const m = new Map<string, SessionRow[]>();
-    for (const s of pageRows) {
-      const k = new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date(s.mulai_at));
-      m.set(k, [...(m.get(k) ?? []), s]);
-    }
-    return [...m.entries()];
-  }, [pageRows]);
 
   const absenButton = (s: SessionRow, big = false) => {
     if (s.tutor_id !== me.id || s.status_kehadiran !== "terjadwal") return null;
@@ -85,7 +94,7 @@ export function ScheduleView({
     const early = now < new Date(s.mulai_at).getTime() - win.buka * 60_000;
     return (
       <div className="space-y-1">
-        <Button className={big ? "h-12 w-full text-base" : ""} disabled={!ok} onClick={() => setAttending(s)}>
+        <Button className={big ? "h-12 w-full text-base" : ""} disabled={!ok} onClick={() => { setDetail(null); setAttending(s); }}>
           <Camera /> Absen
         </Button>
         {!ok && (
@@ -97,124 +106,76 @@ export function ScheduleView({
     );
   };
 
-  const kehadiranCell = (s: SessionRow) => (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <Pill color={KEHADIRAN[s.status_kehadiran].color}>{KEHADIRAN[s.status_kehadiran].label}</Pill>
-      {s.foto_file_id && (
-        <Button size="sm" variant="outline" onClick={() => setPhoto(s)}>
-          <ImageIcon /> Foto Bukti
-        </Button>
-      )}
-      {s.status_kehadiran === "hadir" && !s.foto_file_id && <span className="text-xs text-muted-foreground">(manual)</span>}
-    </div>
+  // Absen 1x klik: sesi milik akun ini yang sedang dalam jendela absen tampil di atas timeline
+  const ready = useMemo(
+    () => sessions.filter((s) => s.tutor_id === me.id && s.status_kehadiran === "terjadwal" && inWindow(s, win, now)).sort((a, b) => a.mulai_at.localeCompare(b.mulai_at)),
+    [sessions, me.id, win, now],
   );
-
-  const tagihanCell = (s: SessionRow) =>
-    s.status_kehadiran !== "hadir" ? <span className="text-muted-foreground">-</span>
-      : s.status_tagihan === "terekap" ? <Pill color="blue">Terekap</Pill>
-      : <Pill color="amber">Belum Rekap</Pill>;
 
   return (
     <div className="space-y-4">
-      <Toolbar>
-        <SearchBox value={list.q} onChange={list.setQ} placeholder={perm.viewAll ? "Cari siswa, tentor, program, atau kelas..." : "Cari siswa atau program..."} />
-        {perm.manage && <Button onClick={() => setCreating(true)}><Plus /> Buat Jadwal</Button>}
-      </Toolbar>
-      {perm.viewAll && (
-        <div className="rounded-xl border bg-card p-3">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Field label="Dari"><DatePicker aria-label="Dari tanggal" value={filters.from} max={filters.to || undefined} onChange={(v) => v && setFilter("from", v)} /></Field>
-            <Field label="Sampai"><DatePicker aria-label="Sampai tanggal" value={filters.to} min={filters.from || undefined} onChange={(v) => v && setFilter("to", v)} /></Field>
-            <Field label="Tentor">
-              <AppSelect value={filters.tutor} onChange={(v) => setFilter("tutor", v)} aria-label="Tentor"
-                options={[{ value: "", label: "Semua tentor" }, ...tutors.map((t) => ({ value: t.id, label: t.nama }))]} />
-            </Field>
-            <Field label="Status">
-              <AppSelect value={filters.status} onChange={(v) => setFilter("status", v)} aria-label="Status"
-                options={[{ value: "", label: "Semua status" }, ...Object.entries(KEHADIRAN).map(([k, v]) => ({ value: k, label: v.label }))]} />
-            </Field>
-          </div>
-        </div>
-      )}
-
-      {list.total === 0 ? (
-        <EmptyState title="Tidak ada jadwal" desc={perm.viewAll ? "Ubah rentang tanggal atau buat jadwal baru." : "Belum ada jadwal les untuk Anda di rentang ini."} />
-      ) : (
-        <>
-          {perm.viewAll && (
-            <div className="hidden md:block">
-              <DataTable head={["Waktu Les", "Siswa & Kelas", "Program", "Tentor", "Kehadiran & Bukti", "Tagihan", ""]}>
-                {pageRows.map((s) => (
-                  <tr key={s.id}>
-                    <Td>
-                      <p className="font-semibold whitespace-nowrap">{tanggal(s.mulai_at)}</p>
-                      <p className="text-xs text-muted-foreground">{jam(s.mulai_at)} - {jam(s.selesai_at)}</p>
-                    </Td>
-                    <Td>
-                      <p className="font-semibold">{s.students?.nama}</p>
-                      <p className="text-xs text-muted-foreground">{s.students?.kelas}</p>
-                    </Td>
-                    <Td>{s.programs?.nama}</Td>
-                    <Td>{s.profiles?.nama}</Td>
-                    <Td>{kehadiranCell(s)}</Td>
-                    <Td>{tagihanCell(s)}</Td>
-                    <Td>
-                      <div className="flex flex-col items-start gap-1.5">
-                        {absenButton(s)}
-                        {perm.manage && s.status_tagihan === "belum_rekap" && (
-                          <div className="flex gap-1">
-                            <Button size="icon-sm" variant="ghost" aria-label="Edit" onClick={() => setEditing(s)}><Pencil /></Button>
-                            <Button size="icon-sm" variant="ghost" aria-label="Ubah kehadiran" onClick={() => setOverriding(s)}><ShieldCheck /></Button>
-                          </div>
-                        )}
-                      </div>
-                    </Td>
-                  </tr>
-                ))}
-              </DataTable>
-            </div>
-          )}
-
-          <div className={perm.viewAll ? "space-y-5 md:hidden" : "space-y-5"}>
-            {groups.map(([day, daySessions]) => (
-              <section key={day} className="space-y-2">
-                <h2 className="text-sm font-semibold text-muted-foreground">{tanggal(daySessions[0].mulai_at)}</h2>
-                <div className="grid gap-3 md:grid-cols-2">
-                  {daySessions.map((s) => (
-                    <div key={s.id} className="space-y-3 rounded-xl border bg-card p-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="flex items-center gap-1.5 text-sm font-semibold text-primary">
-                            <Clock className="size-4" /> {jam(s.mulai_at)} - {jam(s.selesai_at)}
-                          </p>
-                          <p className="mt-1 font-semibold">{s.students?.nama} <span className="font-normal text-muted-foreground">• {s.students?.kelas}</span></p>
-                          <p className="text-sm text-muted-foreground">{s.programs?.nama}{perm.viewAll && ` • ${s.profiles?.nama}`}</p>
-                        </div>
-                        {perm.viewAll && tagihanCell(s)}
-                      </div>
-                      {kehadiranCell(s)}
-                      {s.absen_at && <p className="text-xs text-muted-foreground">Absen: {tanggalJam(s.absen_at)} WIB (waktu server)</p>}
-                      {absenButton(s, true)}
-                      {perm.manage && s.status_tagihan === "belum_rekap" && (
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => setEditing(s)}><Pencil /> Edit</Button>
-                          <Button size="sm" variant="outline" onClick={() => setOverriding(s)}><ShieldCheck /> Kehadiran</Button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+      {ready.length > 0 && (
+        <section className="rounded-xl border border-primary/30 bg-primary/5 p-4" aria-label="Siap absen">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <Camera className="size-4 text-primary" /> Siap absen ({ready.length})
+          </h2>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {ready.slice(0, 6).map((s) => (
+              <div key={s.id} className="flex items-center justify-between gap-3 rounded-lg border bg-card p-3">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-1.5 text-sm font-semibold text-primary">
+                    <Clock className="size-4" /> {jam(s.mulai_at)} - {jam(s.selesai_at)} <span className="font-normal text-muted-foreground">• {tanggal(s.mulai_at, false)}</span>
+                  </p>
+                  <p className="mt-0.5 truncate font-semibold">
+                    {siswaLabel(s.students)} {s.students?.kelas && <span className="font-normal text-muted-foreground">• {s.students.kelas}</span>}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">{s.programs?.nama}</p>
                 </div>
-              </section>
+                <Button className="h-11 shrink-0 px-5 text-base" onClick={() => setAttending(s)}>
+                  <Camera /> Absen
+                </Button>
+              </div>
             ))}
           </div>
-        </>
+          {ready.length > 6 && <p className="mt-2 text-xs text-muted-foreground">+{ready.length - 6} sesi lain; buka dari jadwal di bawah.</p>}
+        </section>
       )}
-      <Pager page={list.page} pages={list.pages} total={list.total} pageSize={list.pageSize} onPage={list.setPage} />
 
-      {creating && <CreateDialog tutors={tutors} studentPrograms={studentPrograms} onClose={() => setCreating(false)} />}
-      {editing && <EditDialog s={editing} tutors={tutors} onClose={() => setEditing(null)} />}
+      <div className={cn(navPending && "pointer-events-none opacity-60 transition-opacity")} aria-busy={navPending}>
+        <Timeline
+          sessions={sessions}
+          tutors={tutors}
+          counts={counts}
+          conflictIds={conflictIds}
+          nav={nav}
+          now={now}
+          canManage={perm.manage}
+          single={!perm.viewAll}
+          onNavigate={navigate}
+          onCreate={(init) => setCreating(init ?? {})}
+          onOpen={setDetail}
+        />
+      </div>
+
+      {creating && <CreateDialog tutors={activeTutors} studentPrograms={studentPrograms} initial={creating} onClose={() => setCreating(null)} />}
+      {editing && <EditDialog s={editing} tutors={activeTutors} onClose={() => setEditing(null)} />}
       {overriding && <OverrideDialog s={overriding} onClose={() => setOverriding(null)} />}
-      {photo && <PhotoDialog s={photo} onClose={() => setPhoto(null)} />}
+      {detail && (
+        <SessionDetail
+          s={detail}
+          tutor={tutors.find((t) => t.id === detail.tutor_id)}
+          now={now}
+          canManage={perm.manage}
+          conflicts={(conflictMap.get(detail.id) ?? []).flatMap((c) => {
+            const other = sessionById.get(c.other.id);
+            return other ? [{ session: other, kinds: c.kinds }] : [];
+          })}
+          absenSlot={absenButton(detail, true)}
+          onEdit={() => { setEditing(detail); setDetail(null); }}
+          onOverride={() => { setOverriding(detail); setDetail(null); }}
+          onClose={() => setDetail(null)}
+        />
+      )}
       {attending && (
         <CameraAttendance
           session={attending}
@@ -227,14 +188,60 @@ export function ScheduleView({
   );
 }
 
-function CreateDialog({ tutors, studentPrograms, onClose }: { tutors: { id: string; nama: string }[]; studentPrograms: StudentProgramOpt[]; onClose: () => void }) {
+/** Cek bentrok ke server (ditunda 350 ms setelah form berhenti berubah). Hanya peringatan, tidak memblokir. */
+function useConflicts(input: Parameters<typeof checkSessionConflicts>[0]) {
+  const [list, setList] = useState<ConflictInfo[]>([]);
+  const key = JSON.stringify(input);
+  useEffect(() => {
+    let stale = false;
+    const t = setTimeout(async () => {
+      const r = await checkSessionConflicts(JSON.parse(key));
+      if (!stale) setList(r.ok ? r.conflicts : []);
+    }, 350);
+    return () => {
+      stale = true;
+      clearTimeout(t);
+    };
+  }, [key]);
+  return list;
+}
+
+function ConflictWarning({ list }: { list: ConflictInfo[] }) {
+  if (!list.length) return null;
+  return (
+    <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+      <p className="flex items-center gap-1.5 font-semibold">
+        <AlertTriangle className="size-4 text-amber-600" /> Jadwal ini bentrok dengan {list.length} sesi lain
+      </p>
+      <ul className="mt-1.5 space-y-1 text-xs">
+        {list.map((c) => (
+          <li key={`${c.tanggal}-${c.jenis}-${c.jam}-${c.siswa}-${c.program}`}>
+            <b>{tanggal(`${c.tanggal}T12:00:00+07:00`)}</b> • {KIND_LABEL[c.jenis]}: {c.jam} — {c.siswa}
+            {c.kelas ? ` (${c.kelas})` : ""}, {c.program}
+            {c.jenis === "siswa" ? ` · tentor ${c.tentor}` : ""}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1.5 text-xs text-amber-900/80">Tetap bisa disimpan bila memang disengaja.</p>
+    </div>
+  );
+}
+
+function CreateDialog({ tutors, studentPrograms, initial, onClose }: {
+  tutors: { id: string; nama: string }[];
+  studentPrograms: StudentProgramOpt[];
+  /** Diisi saat dibuka dari klik sel Resource Timeline (tentor & tanggal sudah terpilih). */
+  initial?: { tutorId?: string; tgl?: string };
+  onClose: () => void;
+}) {
   const [pending, start] = useTransition();
   const [spId, setSpId] = useState("");
-  const [tutorId, setTutorId] = useState("");
-  const [tgl, setTgl] = useState("");
+  const [tutorId, setTutorId] = useState(initial?.tutorId ?? "");
+  const [tgl, setTgl] = useState(initial?.tgl ?? "");
   const [mulai, setMulai] = useState("16:00");
   const [selesai, setSelesai] = useState("17:00");
   const [ulang, setUlang] = useState(1);
+  const conflicts = useConflicts({ tutor_id: tutorId, student_program_id: spId, tanggal: tgl, jam_mulai: mulai, jam_selesai: selesai, ulang_minggu: ulang });
 
   return (
     <FormDialog title="Buat Jadwal" onClose={onClose}>
@@ -246,11 +253,13 @@ function CreateDialog({ tutors, studentPrograms, onClose }: { tutors: { id: stri
             onChange={(v) => {
               setSpId(v);
               const sp = studentPrograms.find((x) => x.id === v);
-              if (sp?.tutor_id) setTutorId(sp.tutor_id);
+              // Dibuka dari sel tentor tertentu: jangan timpa pilihan tentor itu
+              if (sp?.tutor_id && !initial?.tutorId) setTutorId(sp.tutor_id);
             }}
             options={studentPrograms
               .slice()
-              .sort((a, b) => a.students.nama.localeCompare(b.students.nama))
+              // siswa binaan tentor terpilih tampil duluan
+              .sort((a, b) => Number(b.tutor_id === tutorId) - Number(a.tutor_id === tutorId) || a.students.nama.localeCompare(b.students.nama))
               .map((sp) => ({ value: sp.id, label: `${sp.students.nama} — ${sp.programs?.nama}` }))}
           />
         </Field>
@@ -264,6 +273,7 @@ function CreateDialog({ tutors, studentPrograms, onClose }: { tutors: { id: stri
         <Field label="Jam mulai (WIB)"><TimePicker aria-label="Jam mulai" value={mulai} onChange={setMulai} /></Field>
         <Field label="Jam selesai (WIB)"><TimePicker aria-label="Jam selesai" value={selesai} onChange={setSelesai} /></Field>
       </div>
+      <ConflictWarning list={conflicts} />
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onClose}>Batal</Button>
         <Button
@@ -272,7 +282,7 @@ function CreateDialog({ tutors, studentPrograms, onClose }: { tutors: { id: stri
             const r = await createSessions({ student_program_id: spId, tutor_id: tutorId, tanggal: tgl, jam_mulai: mulai, jam_selesai: selesai, ulang_minggu: ulang });
             if (r.ok) { toast.success(r.message); onClose(); } else toast.error(r.error);
           })}
-        >{pending ? "Menyimpan..." : "Simpan"}</Button>
+        >{pending ? "Menyimpan..." : conflicts.length ? "Tetap simpan" : "Simpan"}</Button>
       </div>
     </FormDialog>
   );
@@ -286,6 +296,7 @@ function EditDialog({ s, tutors, onClose }: { s: SessionRow; tutors: { id: strin
   const [tgl, setTgl] = useState(a.tanggal);
   const [mulai, setMulai] = useState(a.jam);
   const [selesai, setSelesai] = useState(b.jam);
+  const conflicts = useConflicts({ tutor_id: tutorId, session_id: s.id, tanggal: tgl, jam_mulai: mulai, jam_selesai: selesai });
   return (
     <FormDialog title="Edit Jadwal" desc={`${s.students?.nama} — ${s.programs?.nama}`} onClose={onClose}>
       <div className="grid gap-3 sm:grid-cols-3">
@@ -296,6 +307,7 @@ function EditDialog({ s, tutors, onClose }: { s: SessionRow; tutors: { id: strin
         <Field label="Mulai"><TimePicker aria-label="Jam mulai" value={mulai} onChange={setMulai} /></Field>
         <Field label="Selesai"><TimePicker aria-label="Jam selesai" value={selesai} onChange={setSelesai} /></Field>
       </div>
+      <ConflictWarning list={conflicts} />
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onClose}>Batal</Button>
         <Button
@@ -304,7 +316,7 @@ function EditDialog({ s, tutors, onClose }: { s: SessionRow; tutors: { id: strin
             const r = await updateSession({ id: s.id, tutor_id: tutorId, tanggal: tgl, jam_mulai: mulai, jam_selesai: selesai });
             if (r.ok) { toast.success(r.message); onClose(); } else toast.error(r.error);
           })}
-        >Simpan</Button>
+        >{conflicts.length ? "Tetap simpan" : "Simpan"}</Button>
       </div>
     </FormDialog>
   );
@@ -341,29 +353,6 @@ function OverrideDialog({ s, onClose }: { s: SessionRow; onClose: () => void }) 
             if (r.ok) { toast.success(r.message); onClose(); } else toast.error(r.error);
           })}
         >Simpan</Button>
-      </div>
-    </FormDialog>
-  );
-}
-
-function PhotoDialog({ s, onClose }: { s: SessionRow; onClose: () => void }) {
-  return (
-    <FormDialog title="Foto Bukti Hadir" desc={`${s.students?.nama} • ${s.profiles?.nama ?? ""}`} onClose={onClose}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={fileHref(s.foto_file_id!)} alt="Foto bukti hadir" className="w-full rounded-lg border" loading="lazy" />
-      <div className="space-y-1 text-sm">
-        <p><b>Waktu absen (server):</b> {tanggalJam(s.absen_at)} WIB</p>
-        <p><b>Jadwal:</b> {tanggal(s.mulai_at)} {jam(s.mulai_at)} - {jam(s.selesai_at)}</p>
-        {s.lat != null && s.lng != null && (
-          <a
-            href={`https://www.google.com/maps?q=${s.lat},${s.lng}`}
-            target="_blank"
-            rel="noopener"
-            className="inline-flex items-center gap-1 text-primary hover:underline"
-          >
-            <MapPin className="size-4" /> Lihat lokasi di peta (akurasi ±{Math.round(s.akurasi_m ?? 0)} m)
-          </a>
-        )}
       </div>
     </FormDialog>
   );

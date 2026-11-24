@@ -97,6 +97,8 @@ export async function listReports(actor: Actor, opts: ListOpts = {}): Promise<{ 
     .orderBy(desc(progressReports.uploadedAt), desc(progressReports.id))
     .offset((page - 1) * pageSize)
     .limit(pageSize);
+  // Revisi 24-11: tentor hanya perlu nama, kelas & jadwal. Kontak orang tua hanya untuk pemegang akses Data Siswa.
+  const seeContact = can(actor, "siswa", "read");
   return { total, rows: rows.map(({ r, ...x }) => ({
     id: r.id,
     student_id: r.studentId,
@@ -109,7 +111,7 @@ export async function listReports(actor: Actor, opts: ListOpts = {}): Promise<{ 
     uploaded_at: r.uploadedAt.toISOString(),
     edited_at: r.updatedAt?.toISOString() ?? null,
     edited_by: r.updatedAt ? (x.eNama ?? "(akun dihapus)") : null,
-    students: { nama: x.sNama, kelas: x.kelas, ortu_wa: x.ortuWa, ortu_nama: x.ortuNama },
+    students: { nama: x.sNama, kelas: x.kelas, ortu_wa: seeContact ? x.ortuWa : null, ortu_nama: seeContact ? x.ortuNama : null },
     programs: x.pNama ? { nama: x.pNama } : null,
     profiles: { nama: x.tNama },
   })) };
@@ -125,11 +127,12 @@ export async function listMyAssignments(actor: Actor): Promise<AssignmentRow[]> 
     .innerJoin(programs, eq(programs.id, studentPrograms.programId))
     .where(and(eq(studentPrograms.tutorId, actor.id), isNull(students.deletedAt)))
     .orderBy(asc(students.nama));
+  const seeContact = can(actor, "siswa", "read"); // tentor biasa: tanpa kontak orang tua
   return rows.map(({ sp, s, pNama }) => ({
     id: sp.id,
     student_id: sp.studentId,
     program_id: sp.programId,
-    students: { nama: s.nama, kelas: s.kelas, ortu_wa: s.ortuWa, ortu_nama: s.ortuNama, status: s.status },
+    students: { nama: s.nama, kelas: s.kelas, ortu_wa: seeContact ? s.ortuWa : null, ortu_nama: seeContact ? s.ortuNama : null, status: s.status },
     programs: { nama: pNama },
   }));
 }

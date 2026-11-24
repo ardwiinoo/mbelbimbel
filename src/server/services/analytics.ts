@@ -18,7 +18,8 @@ export type MonthlyAnalytics = {
     scope: "all" | "own";
     total: number;
     byStatus: { terjadwal: number; hadir: number; tidak_hadir: number; batal: number };
-    rekap: { terekap: number; belum: number };
+    /** Status penagihan sesi hadir. Null bila akun tanpa akses Invoice (tentor tidak melihat urusan tagihan). */
+    rekap: { terekap: number; belum: number } | null;
     /** les HADIR per minggu ke-1..5 dalam bulan */
     weekly: number[];
     /** les HADIR per tentor (hanya scope "all"), terbesar dulu */
@@ -80,7 +81,7 @@ export async function monthlyAnalytics(actor: Actor, monthInput?: string): Promi
       scope: seeAll ? "all" : "own",
       total: Object.values(byStatus).reduce((a, b) => a + b, 0),
       byStatus,
-      rekap,
+      rekap: can(actor, "invoice", "read") ? rekap : null,
       weekly,
       perTutor: tutorRows.map((t) => ({ nama: t.nama, hadir: t.n })),
     };

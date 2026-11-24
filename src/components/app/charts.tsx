@@ -8,12 +8,15 @@ import { cn } from "@/lib/utils";
 
 /** Slot warna kategori (urutan tetap, divalidasi). Isi teks di atas warna: putih/gelap sesuai luminans. */
 // Hex langsung (bukan CSS var): Tailwind v4 membuang :root var yang hanya dipakai di style inline.
+// Palet PASTEL: isi lembut + garis tepi satu tingkat lebih pekat (supaya blok tetap terbaca di latar putih)
+// + teks gelap sewarna (kontras terjaga). Identitas seri tetap dibantu legenda & angka, bukan warna saja.
 export const SERIES = {
-  blue: { fill: "#2a78d6", ink: "#fff" },
-  orange: { fill: "#eb6834", ink: "#fff" },
-  aqua: { fill: "#1baf7a", ink: "#0b0b0b" },
-  red: { fill: "#e34948", ink: "#fff" },
+  blue: { fill: "#A8C9F5", edge: "#6FA3E8", ink: "#1E3A8A" },
+  orange: { fill: "#FBC7A3", edge: "#F0975F", ink: "#7C2D12" },
+  aqua: { fill: "#A6E4CE", edge: "#5CC9A1", ink: "#064E3B" },
+  red: { fill: "#F6B0B0", edge: "#E67C7C", ink: "#7F1D1D" },
 } as const;
+const edge = (k: keyof typeof SERIES) => `inset 0 0 0 1px ${SERIES[k].edge}`;
 export type SeriesKey = keyof typeof SERIES;
 
 const nf = new Intl.NumberFormat("id-ID");
@@ -88,7 +91,7 @@ export function SegmentedBar({ parts, tall = true, unit = "" }: { parts: Part[];
                   i === 0 && "rounded-l-[4px]",
                   i === shown.length - 1 && "rounded-r-[4px]",
                 )}
-                style={{ width: `${w}%`, background: SERIES[p.color].fill, color: SERIES[p.color].ink }}
+                style={{ width: `${w}%`, background: SERIES[p.color].fill, color: SERIES[p.color].ink, boxShadow: edge(p.color) }}
               >
                 {tall && w >= 12 && <span className="tabular-nums">{nf.format(p.value)}</span>}
                 <Tip>
@@ -102,7 +105,7 @@ export function SegmentedBar({ parts, tall = true, unit = "" }: { parts: Part[];
       <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
         {parts.map((p) => (
           <li key={p.label} className="flex items-center gap-1.5">
-            <span className="size-2.5 rounded-[3px]" style={{ background: SERIES[p.color].fill }} aria-hidden />
+            <span className="size-2.5 rounded-[3px]" style={{ background: SERIES[p.color].fill, boxShadow: edge(p.color) }} aria-hidden />
             <span className="text-muted-foreground">{p.label}</span>
             <span className="font-semibold tabular-nums">{nf.format(p.value)}</span>
             {total > 0 && <span className="text-xs text-muted-foreground">({pct(p.value, total)}%)</span>}
@@ -125,7 +128,7 @@ export function ColumnChart({ data, valueLabel }: { data: { label: string; value
             <div
               tabIndex={0}
               className="group relative w-full max-w-6 rounded-t-[4px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              style={{ height: d.value ? Math.max(4, Math.round((d.value / max) * 112)) : 0, background: SERIES.blue.fill }}
+              style={{ height: d.value ? Math.max(4, Math.round((d.value / max) * 112)) : 0, background: SERIES.blue.fill, boxShadow: edge("blue") }}
             >
               <Tip>
                 <b>{nf.format(d.value)}</b> {valueLabel} · {d.label}
@@ -162,7 +165,7 @@ export function RankedBars({ data, valueLabel }: { data: { label: string; value:
               <div
                 tabIndex={0}
                 className="group relative h-3 rounded-r-[4px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                style={{ width: `${Math.max(2, (d.value / max) * 100)}%`, background: SERIES.blue.fill }}
+                style={{ width: `${Math.max(2, (d.value / max) * 100)}%`, background: SERIES.blue.fill, boxShadow: edge("blue") }}
               >
                 <Tip>
                   <b>{nf.format(d.value)}</b> {valueLabel} · {d.label}

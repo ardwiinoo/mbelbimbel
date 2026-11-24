@@ -10,7 +10,8 @@ import { SearchBox, ServerPager, ServerSearch, Toolbar, useQueryNav } from "@/co
 import { ShareWaButton } from "@/components/app/share-wa";
 import { rupiah, tanggal, jam, bulanWib, namaBulan } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { issueInvoice, setPaid } from "./actions";
+import { issueInvoice, loadInvoiceHistory, setPaid } from "./actions";
+import { HistoryPanel } from "@/components/app/history-panel";
 import { AppSelect } from "@/components/app/app-select";
 
 import type { InvoiceRow, InvoiceSummary, ReadySession } from "@/server/services/invoices";
@@ -166,7 +167,7 @@ function todayWib() {
 }
 
 /** Dialog konfirmasi pembayaran: pilih tanggal bayar, atau batalkan status lunas. */
-function PaymentDialog({ inv, onClose }: { inv: InvoiceRow; onClose: () => void }) {
+function PaymentDialog({ inv, meNama, onClose }: { inv: InvoiceRow; meNama: string; onClose: () => void }) {
   const [pending, start] = useTransition();
   const [tgl, setTgl] = useState(inv.tgl_bayar ?? todayWib());
   const isLunas = inv.status_bayar === "lunas";
@@ -185,6 +186,13 @@ function PaymentDialog({ inv, onClose }: { inv: InvoiceRow; onClose: () => void 
         <DatePicker value={tgl} max={todayWib()} onChange={setTgl} />
       </Field>
       <p className="text-xs text-muted-foreground">Status di nota PDF ikut berubah menjadi LUNAS beserta tanggalnya.</p>
+      <p className="text-xs text-muted-foreground">
+        Pencatatan ini atas nama <b className="text-foreground">{meNama}</b> dan tersimpan di riwayat.
+      </p>
+      <div className="space-y-1.5">
+        <p className="text-xs font-semibold text-muted-foreground">Riwayat pencatatan</p>
+        <HistoryPanel load={() => loadInvoiceHistory(inv.id).then((r) => (r.ok ? r.data : []))} />
+      </div>
       <div className="flex flex-wrap justify-end gap-2">
         {isLunas && (
           <Button variant="ghost" className="mr-auto text-destructive" disabled={pending} onClick={() => run(false)}>
@@ -207,6 +215,7 @@ export function InvoiceHistory({
   page,
   status,
   canWrite,
+  meNama,
 }: {
   invoices: InvoiceRow[];
   total: number;
@@ -215,6 +224,8 @@ export function InvoiceHistory({
   status: string;
   /** akses Invoice (Kelola): boleh menandai lunas */
   canWrite: boolean;
+  /** Nama akun yang sedang login (ditampilkan sebagai pencatat pada dialog pelunasan). */
+  meNama: string;
 }) {
   const [paying, setPaying] = useState<InvoiceRow | null>(null);
   const { set, pending } = useQueryNav();
@@ -262,7 +273,7 @@ export function InvoiceHistory({
             <tr key={inv.id}>
               <Td className="whitespace-nowrap">
                 <p className="font-medium">{inv.nomor}</p>
-                {inv.created_by && <p className="text-[11px] text-muted-foreground">oleh {inv.created_by}</p>}
+                {inv.created_by && <p className="text-[11px] text-muted-foreground">diterbitkan oleh {inv.created_by}</p>}
               </Td>
               <Td className="whitespace-nowrap">{tanggal(inv.tgl_terbit, false)}</Td>
               <Td><b>{inv.students?.nama}</b> ({inv.students?.kelas?.replace("Kelas ", "")})</Td>
@@ -273,10 +284,10 @@ export function InvoiceHistory({
                   <div className="space-y-1">
                     <Pill color="green">Lunas</Pill>
                     {inv.tgl_bayar && <p className="text-[11px] text-muted-foreground">{tanggal(inv.tgl_bayar, false)}</p>}
-                    {inv.updated_by && <p className="text-[11px] text-muted-foreground">dicatat oleh {inv.updated_by}</p>}
+                    <p className="text-[11px] text-muted-foreground">dicatat oleh {inv.dibayar_oleh ?? inv.updated_by ?? "–"}</p>
                     {canWrite && (
                       <button className="block text-[11px] text-muted-foreground underline hover:text-foreground" onClick={() => setPaying(inv)}>
-                        ubah
+                        ubah / riwayat
                       </button>
                     )}
                   </div>
@@ -310,7 +321,7 @@ export function InvoiceHistory({
         </DataTable>
       )}
       <ServerPager total={total} page={page} />
-      {paying && <PaymentDialog inv={paying} onClose={() => setPaying(null)} />}
+      {paying && <PaymentDialog inv={paying} meNama={meNama} onClose={() => setPaying(null)} />}
     </section>
   );
 }

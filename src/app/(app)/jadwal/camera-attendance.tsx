@@ -125,15 +125,16 @@ export function CameraAttendance({
       `Tentor: ${tutorName} • Siswa: ${session.students?.nama ?? "-"}`,
       geo ? `Lokasi: ${geo.lat.toFixed(5)}, ${geo.lng.toFixed(5)} (±${Math.round(geo.acc)} m)` : "Lokasi: belum tersedia",
     ];
-    const fs = Math.max(14, Math.round(w / 40));
-    const pad = Math.round(fs * 0.6);
-    const boxH = lines.length * (fs + 6) + pad * 2;
+    const fs = Math.max(11, Math.round(w / 56));
+    const pad = Math.round(fs * 0.7);
+    const gap = Math.round(fs * 0.35);
+    const boxH = lines.length * (fs + gap) + pad * 2 - gap;
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(0, h - boxH, w, boxH);
     ctx.fillStyle = "#fff";
     ctx.font = `600 ${fs}px system-ui, sans-serif`;
     ctx.textBaseline = "top";
-    lines.forEach((l, i) => ctx.fillText(l, pad, h - boxH + pad + i * (fs + 6)));
+    lines.forEach((l, i) => ctx.fillText(l, pad, h - boxH + pad + i * (fs + gap), w - pad * 2));
 
     // Kompres: target < 300 KB
     let blob: Blob | null = null;
