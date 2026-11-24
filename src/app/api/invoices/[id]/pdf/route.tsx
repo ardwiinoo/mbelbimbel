@@ -18,7 +18,14 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/invoices/[id
   const data = await getInvoicePdfData(actor, id);
   if (!data) return new NextResponse("Invoice tidak ditemukan", { status: 404 });
 
-  const buf = await renderToBuffer(<InvoiceDoc d={data} />);
+  // Logo rusak tidak boleh menggagalkan nota: ulangi tanpa logo
+  let buf: Buffer;
+  try {
+    buf = await renderToBuffer(<InvoiceDoc d={data} />);
+  } catch (e) {
+    console.error("[pdf] nota gagal dirender dengan logo, mengulang tanpa logo", e);
+    buf = await renderToBuffer(<InvoiceDoc d={{ ...data, branding: { ...data.branding, logo: null } }} />);
+  }
   const filename = `${data.nomor.replaceAll("/", "-")}.pdf`;
   const download = req.nextUrl.searchParams.get("download") === "1";
   return new NextResponse(new Uint8Array(buf), {

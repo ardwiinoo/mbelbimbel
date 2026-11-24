@@ -5,7 +5,39 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Field } from "@/components/app/form-dialog";
-import { changeEmail, changePassword } from "./actions";
+import { changeEmail, changePassword, updateProfile } from "./actions";
+
+export function ProfileForm({ nama: current, noWa }: { nama: string; noWa: string | null }) {
+  const [nama, setNama] = useState(current);
+  const [wa, setWa] = useState(noWa ?? "");
+  const [pending, start] = useTransition();
+  const dirty = nama.trim() !== current || wa.trim() !== (noWa ?? "");
+  return (
+    <form
+      className="grid gap-3 sm:grid-cols-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          const r = await updateProfile({ nama, no_wa: wa });
+          if (r.ok) toast.success(r.message);
+          else toast.error(r.error);
+        });
+      }}
+    >
+      <Field label="Nama" hint="Tampil di jadwal, laporan, dan slip.">
+        <Input autoComplete="name" value={nama} maxLength={100} onChange={(e) => setNama(e.target.value)} required />
+      </Field>
+      <Field label="No. WhatsApp" hint="Dipakai admin untuk menghubungi Anda.">
+        <Input inputMode="tel" autoComplete="tel" placeholder="0812-3456-7890" value={wa} maxLength={30} onChange={(e) => setWa(e.target.value)} />
+      </Field>
+      <div className="sm:col-span-2">
+        <Button type="submit" disabled={pending || !dirty || nama.trim().length < 2}>
+          {pending ? "Menyimpan..." : "Simpan Data Diri"}
+        </Button>
+      </div>
+    </form>
+  );
+}
 
 export function EmailForm({ current }: { current: string }) {
   const [email, setEmail] = useState(current);

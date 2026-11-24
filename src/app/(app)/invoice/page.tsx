@@ -29,7 +29,7 @@ export default async function InvoicePage({ searchParams }: PageProps<"/invoice"
       />
       <div className="space-y-10">
         <ReadyToBill sessions={sessions} programs={programs} canWrite={canWrite} />
-        <InvoiceHistory invoices={history.rows} total={history.total} summary={history.summary} page={page} status={status} canWrite={canWrite} />
+        <InvoiceHistory invoices={history.rows} total={history.total} summary={history.summary} page={page} status={status} canWrite={canWrite} meNama={me.nama} />
       </div>
     </>
   );

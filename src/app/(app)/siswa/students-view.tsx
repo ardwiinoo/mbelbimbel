@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable, Td, Pill, EmptyState } from "@/components/app/ui";
 import { FilterRow, filterSelectClass, Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
 import { FileLinks } from "@/components/app/file-link";
-import { umur, waLink, KATEGORI_LABEL, tanggal } from "@/lib/format";
+import { umur, waLink, KATEGORI_LABEL, tanggal, siswaLabel } from "@/lib/format";
 import { postForm } from "@/lib/post-form";
 import type { StudentRow } from "@/server/services/students";
 import { StudentDialog } from "./student-dialog";
@@ -23,7 +23,7 @@ export type StudentPerm = { viewAll: boolean; manage: boolean; asesmen: "read" |
 type Opt = { id: string; nama: string };
 
 const searchText = (s: StudentRow) =>
-  [s.nama, s.kelas, s.sekolah, s.alamat, s.ortu_nama, s.ortu_wa, ...s.student_programs.map((p) => `${p.programs?.nama} ${p.profiles?.nama ?? ""}`)].join(" ");
+  [s.nama, s.panggilan, s.kelas, s.sekolah, s.alamat, s.ortu_nama, s.ortu_wa, ...s.student_programs.map((p) => `${p.programs?.nama} ${p.profiles?.nama ?? ""}`)].join(" ");
 
 export function StudentsView({
   perm,
@@ -62,7 +62,7 @@ export function StudentsView({
   return (
     <div className="space-y-4">
       <Toolbar>
-        <SearchBox value={list.q} onChange={list.setQ} placeholder="Cari siswa, kelas, orang tua…" />
+        <SearchBox value={list.q} onChange={list.setQ} placeholder={perm.viewAll ? "Cari siswa, kelas, orang tua…" : "Cari siswa atau kelas…"} />
         {perm.viewAll && (
           <FilterRow>
             <AppSelect className={filterSelectClass} value={fProgram} onChange={setFProgram} aria-label="Program"
@@ -91,9 +91,9 @@ export function StudentsView({
             <DataTable
               head={[
                 "Profil Siswa",
-                "Alamat",
+                ...(perm.viewAll ? ["Alamat"] : []),
                 "Program",
-                "Orang Tua & WA",
+                ...(perm.viewAll ? ["Orang Tua & WA"] : []),
                 ...(perm.asesmen ? ["Dokumen Asesmen"] : []),
                 "Status",
                 ...(perm.manage ? [""] : []),
@@ -101,10 +101,10 @@ export function StudentsView({
             >
               {rows.map((s) => (
                 <tr key={s.id}>
-                  <Td><ProfileCell s={s} /></Td>
-                  <Td className="max-w-48 text-muted-foreground">{s.alamat ?? "-"}</Td>
+                  <Td><ProfileCell s={s} forTutor={!perm.viewAll} /></Td>
+                  {perm.viewAll && <Td className="max-w-48 text-muted-foreground">{s.alamat ?? "-"}</Td>}
                   <Td><ProgramCell s={s} showTutor={perm.viewAll} /></Td>
-                  <Td><ParentCell s={s} /></Td>
+                  {perm.viewAll && <Td><ParentCell s={s} /></Td>}
                   {perm.asesmen && <Td><AssessmentCell s={s} canUpload={perm.asesmen === "write"} /></Td>}
                   <Td>{statusPill(s)}</Td>
                   {perm.manage && <Td><RowActions s={s} onEdit={() => setEditing(s)} /></Td>}
@@ -116,17 +116,19 @@ export function StudentsView({
             {rows.map((s) => (
               <div key={s.id} className="overflow-hidden rounded-xl border bg-card">
                 <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3">
-                  <ProfileCell s={s} />
+                  <ProfileCell s={s} forTutor={!perm.viewAll} />
                   {statusPill(s)}
                 </div>
                 <dl className="grid gap-3 border-t px-4 py-3.5 text-sm">
                   <CardRow label="Program">
                     <ProgramCell s={s} showTutor={perm.viewAll} />
                   </CardRow>
-                  <CardRow label="Orang tua">
-                    <ParentCell s={s} />
-                  </CardRow>
-                  {s.alamat && <CardRow label="Alamat">{s.alamat}</CardRow>}
+                  {perm.viewAll && (
+                    <CardRow label="Orang tua">
+                      <ParentCell s={s} />
+                    </CardRow>
+                  )}
+                  {perm.viewAll && s.alamat && <CardRow label="Alamat">{s.alamat}</CardRow>}
                   {perm.asesmen && s.student_programs.some((p) => p.programs?.kategori === "abk") && (
                     <CardRow label="Asesmen">
                       <AssessmentCell s={s} canUpload={perm.asesmen === "write"} />
@@ -167,12 +169,13 @@ function CardRow({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-function ProfileCell({ s }: { s: StudentRow }) {
+function ProfileCell({ s, forTutor }: { s: StudentRow; forTutor: boolean }) {
   const u = umur(s.tanggal_lahir);
   return (
     <div>
       <p>
-        <span className="font-semibold">{s.nama}</span>
+        <span className="font-semibold">{forTutor ? siswaLabel(s) : s.nama}</span>
+        {!forTutor && s.panggilan && <span className="text-muted-foreground"> “{s.panggilan}”</span>}
         {u !== null && <span className="text-muted-foreground"> ({u} Th)</span>}
       </p>
       <p className="text-xs text-muted-foreground">{[s.kelas, s.sekolah].filter(Boolean).join(" • ") || "-"}</p>

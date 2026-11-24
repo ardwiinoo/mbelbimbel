@@ -41,6 +41,7 @@ export function StudentDialog({
   const { register, control, handleSubmit } = useForm<FormValues>({
     defaultValues: {
       nama: student?.nama ?? "",
+      panggilan: student?.panggilan ?? "",
       tanggal_lahir: student?.tanggal_lahir ?? "",
       kelas: student?.kelas ?? "",
       sekolah: student?.sekolah ?? "",
@@ -76,12 +77,15 @@ export function StudentDialog({
       wide
     >
       <form onSubmit={handleSubmit(onSubmit)} className="grid gap-3 sm:grid-cols-2">
-        <Field label="Nama lengkap *" className="sm:col-span-2">
+        <Field label="Nama lengkap *">
           <Input {...register("nama", { required: true })} />
         </Field>
-        <Field label="Tanggal lahir" hint="Umur dihitung otomatis">
+        <Field label="Nama panggilan" hint="Dipakai di Jadwal & tampilan tentor">
+          <Input placeholder="mis. Said" {...register("panggilan")} />
+        </Field>
+        <Field label="Tanggal lahir" hint="Ketik DD/MM/YYYY atau pilih dari kalender. Umur dihitung otomatis">
           <Controller control={control} name="tanggal_lahir" render={({ field }) => (
-            <DatePicker clearable placeholder="Pilih tanggal lahir" max={new Date().toISOString().slice(0, 10)} value={field.value ?? ""} onChange={field.onChange} />
+            <DatePicker typeable placeholder="DD/MM/YYYY" max={new Date().toISOString().slice(0, 10)} value={field.value ?? ""} onChange={field.onChange} />
           )} />
         </Field>
         <Field label="Kelas">

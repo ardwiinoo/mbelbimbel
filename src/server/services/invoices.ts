@@ -1,13 +1,16 @@
 import { and, asc, count, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
-import { appSettings, invoiceCounters, invoiceItems, invoices, programs, sessions, students, users } from "@/db/schema";
+import type { AuditItem } from "@/lib/audit-label";
+import { auditLog, invoiceCounters, invoiceItems, invoices, programs, sessions, students, users } from "@/db/schema";
 import { assertCan, UserError, type Actor } from "../authz";
+import { loadBranding } from "../pdf-branding";
 import { likePattern } from "./reports";
 
 const tutorUser = alias(users, "tutor_user");
 const creatorUser = alias(users, "creator_user");
 const updaterUser = alias(users, "updater_user");
+const payerUser = alias(users, "payer_user");
 
 export type ReadySession = {
   id: string;
@@ -28,6 +31,9 @@ export type InvoiceRow = {
   /** nama penerbit & pengubah terakhir (status bayar) */
   created_by: string | null;
   updated_by: string | null;
+  /** Siapa & kapan mencatat pelunasan (kosong bila belum lunas). */
+  dibayar_oleh: string | null;
+  dibayar_pada: string | null;
   students: { nama: string; kelas: string | null; ortu_nama: string | null; ortu_wa: string | null } | null;
   programs: { nama: string } | null;
 };
@@ -79,11 +85,12 @@ export async function listInvoices(
       unpaid: sql<number>`count(*) filter (where ${invoices.statusBayar} = 'belum_lunas')`.mapWith(Number),
       unpaidTotal: sql<number>`coalesce(sum(${invoices.total}) filter (where ${invoices.statusBayar} = 'belum_lunas'), 0)`.mapWith(Number),
     }).from(invoices),
-    db().select({ i: invoices, s: students, pNama: programs.nama, cNama: creatorUser.nama, uNama: updaterUser.nama }).from(invoices)
+    db().select({ i: invoices, s: students, pNama: programs.nama, cNama: creatorUser.nama, uNama: updaterUser.nama, bNama: payerUser.nama }).from(invoices)
       .innerJoin(students, eq(students.id, invoices.studentId))
       .innerJoin(programs, eq(programs.id, invoices.programId))
       .leftJoin(creatorUser, eq(creatorUser.id, invoices.createdBy))
       .leftJoin(updaterUser, eq(updaterUser.id, invoices.updatedBy))
+      .leftJoin(payerUser, eq(payerUser.id, invoices.dibayarOleh))
       .where(where)
       .orderBy(desc(invoices.tglTerbit), desc(invoices.nomor))
       .limit(pageSize)
@@ -92,7 +99,7 @@ export async function listInvoices(
   return {
     total,
     summary: { all: sum.all, unpaid: sum.unpaid, paid: sum.all - sum.unpaid, unpaidTotal: sum.unpaidTotal },
-    rows: rows.map(({ i, s, pNama, cNama, uNama }) => ({
+    rows: rows.map(({ i, s, pNama, cNama, uNama, bNama }) => ({
       id: i.id,
       nomor: i.nomor,
       tgl_terbit: i.tglTerbit.toISOString(),
@@ -102,6 +109,8 @@ export async function listInvoices(
       tgl_bayar: i.tglBayar,
       created_by: cNama ?? null,
       updated_by: uNama ?? null,
+      dibayar_oleh: bNama ?? null,
+      dibayar_pada: i.dibayarPada?.toISOString() ?? null,
       students: { nama: s.nama, kelas: s.kelas, ortu_nama: s.ortuNama, ortu_wa: s.ortuWa },
       programs: { nama: pNama },
     })),
@@ -153,6 +162,7 @@ export async function issueInvoice(actor: Actor | null, studentId: string, progr
       .update(sessions)
       .set({ statusTagihan: "terekap", invoiceId: inv.id, updatedAt: new Date(), updatedBy: actor.id })
       .where(inArray(sessions.id, ids));
+    await tx.insert(auditLog).values({ actorId: actor.id, aksi: "invoice_terbit", target: inv.id, detail: { nomor, sesi: valid.length, total: valid.length * prog.tarif } });
     return { id: inv.id, message: `Invoice ${nomor} terbit` };
   });
 }
@@ -162,13 +172,30 @@ export async function setPaid(actor: Actor | null, id: string, lunas: boolean, t
   if (tglBayar && !/^\d{4}-\d{2}-\d{2}$/.test(tglBayar)) throw new UserError("Tanggal bayar tidak valid");
   const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
   if (tglBayar && tglBayar > today) throw new UserError("Tanggal bayar tidak boleh di masa depan");
-  const r = await db()
-    .update(invoices)
-    .set({ statusBayar: lunas ? "lunas" : "belum_lunas", tglBayar: lunas ? tglBayar || today : null, updatedAt: new Date(), updatedBy: actor.id })
-    .where(eq(invoices.id, id))
-    .returning({ id: invoices.id });
-  if (!r.length) throw new UserError("Invoice tidak ditemukan");
-  return lunas ? "Ditandai Lunas" : "Ditandai Belum Lunas";
+  // Selalu catat siapa & kapan (kolom dibayar_oleh/pada) + jejak audit, supaya bisa dipertanggungjawabkan bila admin > 1.
+  return db().transaction(async (tx) => {
+    const tgl = lunas ? tglBayar || today : null;
+    const [r] = await tx
+      .update(invoices)
+      .set({
+        statusBayar: lunas ? "lunas" : "belum_lunas",
+        tglBayar: tgl,
+        dibayarOleh: lunas ? actor.id : null,
+        dibayarPada: lunas ? new Date() : null,
+        updatedAt: new Date(),
+        updatedBy: actor.id,
+      })
+      .where(eq(invoices.id, id))
+      .returning({ id: invoices.id, nomor: invoices.nomor, total: invoices.total });
+    if (!r) throw new UserError("Invoice tidak ditemukan");
+    await tx.insert(auditLog).values({
+      actorId: actor.id,
+      aksi: lunas ? "invoice_lunas" : "invoice_batal_lunas",
+      target: r.id,
+      detail: { nomor: r.nomor, total: r.total, tgl_bayar: tgl },
+    });
+    return lunas ? "Ditandai Lunas" : "Ditandai Belum Lunas";
+  });
 }
 
 /** Data nota PDF dari snapshot (tarif di invoice_items, bukan tarif master saat ini). */
@@ -187,7 +214,7 @@ export async function getInvoicePdfData(actor: Actor | null, id: string) {
     .from(invoiceItems)
     .where(eq(invoiceItems.invoiceId, id))
     .orderBy(asc(invoiceItems.tanggal));
-  const [cfg] = await db().select().from(appSettings).where(eq(appSettings.id, 1));
+  const branding = await loadBranding();
   return {
     nomor: row.i.nomor,
     tgl_terbit: row.i.tglTerbit.toISOString(),
@@ -197,11 +224,20 @@ export async function getInvoicePdfData(actor: Actor | null, id: string) {
     student: { nama: row.s.nama, kelas: row.s.kelas, ortu_nama: row.s.ortuNama, ortu_wa: row.s.ortuWa, alamat: row.s.alamat },
     program: row.pNama,
     items: items.map((it) => ({ tanggal: it.tanggal.toISOString(), tarif_snapshot: it.tarif })),
-    settings: {
-      nama_bimbel: cfg?.namaBimbel ?? "Bimbel",
-      alamat: cfg?.alamat ?? null,
-      rekening: cfg?.rekening ?? null,
-      wa_admin: cfg?.waAdmin ?? null,
-    },
+    branding,
   };
+}
+
+/** Riwayat pencatatan satu invoice (terbit, lunas, batal lunas): siapa, kapan, apa. Terbaru dulu. */
+export async function invoiceHistory(actor: Actor | null, id: string): Promise<AuditItem[]> {
+  assertCan(actor, "invoice", "read");
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return [];
+  const rows = await db()
+    .select({ a: auditLog, nama: users.nama })
+    .from(auditLog)
+    .leftJoin(users, eq(users.id, auditLog.actorId))
+    .where(and(eq(auditLog.target, id), sql`${auditLog.aksi} like 'invoice\_%'`))
+    .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
+    .limit(50);
+  return rows.map(({ a, nama }) => ({ at: a.createdAt.toISOString(), oleh: nama ?? null, aksi: a.aksi, detail: (a.detail as Record<string, unknown> | null) ?? null }));
 }

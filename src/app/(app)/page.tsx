@@ -6,7 +6,7 @@ import { Pill, KEHADIRAN, EmptyState, SectionHeader } from "@/components/app/ui"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SegmentedBar, ColumnChart, RankedBars } from "@/components/app/charts";
 import { MonthPicker } from "@/components/app/month-picker";
-import { rupiah, jam, tanggal, namaBulan } from "@/lib/format";
+import { rupiah, jam, tanggal, namaBulan, siswaLabel } from "@/lib/format";
 import { listSessions } from "@/server/services/sessions";
 import { dashboardSummary } from "@/server/services/dashboard";
 import { currentMonthWib, monthlyAnalytics } from "@/server/services/analytics";
@@ -87,7 +87,7 @@ export default async function Beranda({ searchParams }: PageProps<"/">) {
                       <Clock className="size-4" /> {jam(st.mulai_at)} – {jam(st.selesai_at)}
                     </p>
                     <p className="mt-1 truncate font-semibold">
-                      {st.students?.nama} <span className="font-normal text-muted-foreground">• {st.students?.kelas}</span>
+                      {siswaLabel(st.students)} <span className="font-normal text-muted-foreground">• {st.students?.kelas}</span>
                     </p>
                     <p className="truncate text-sm text-muted-foreground">
                       {st.programs?.nama}
@@ -131,7 +131,7 @@ export default async function Beranda({ searchParams }: PageProps<"/">) {
                 </CardContent>
               </Card>
             )}
-            {s && (
+            {s?.rekap && (
               <Card>
                 <CardHeader>
                   <CardTitle>Rekap tagihan</CardTitle>

@@ -33,6 +33,7 @@ export const NAV: NavItem[] = [
   { href: "/laporan", label: "Laporan", icon: "file-text", visible: (s) => can(s, "laporan") || s.isTutor },
   { href: "/materi", label: "Bank Materi", icon: "book", visible: (s) => can(s, "materi") },
   { href: "/invoice", label: "Invoice", icon: "receipt", visible: (s) => can(s, "invoice") },
+  { href: "/honor", label: "Honor Tentor", icon: "wallet", visible: (s) => can(s, "honor") },
   { href: "/pengguna", label: "Pengguna & Akses", icon: "shield", visible: (s) => can(s, "pengguna") },
   { href: "/pengaturan", label: "Pengaturan", icon: "settings", visible: (s) => can(s, "pengaturan") },
 ];

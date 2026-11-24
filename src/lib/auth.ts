@@ -66,6 +66,10 @@ export type Settings = {
   link_drive_konten: string | null;
   absen_buka_menit: number;
   absen_tutup_menit: number;
+  absen_susulan_bebas: boolean;
+  logo_file_id: string | null;
+  tagline: string | null;
+  kota: string | null;
 };
 
 export const getSettings = cache(async (): Promise<Settings> => {
@@ -78,5 +82,9 @@ export const getSettings = cache(async (): Promise<Settings> => {
     link_drive_konten: s?.linkDriveKonten ?? null,
     absen_buka_menit: s?.absenBukaMenit ?? 30,
     absen_tutup_menit: s?.absenTutupMenit ?? 60,
+    absen_susulan_bebas: s?.absenSusulanBebas ?? false,
+    logo_file_id: s?.logoFileId ?? null,
+    tagline: s?.tagline ?? null,
+    kota: s?.kota ?? null,
   };
 });

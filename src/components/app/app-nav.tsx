@@ -3,23 +3,24 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
-  Home, Users, Briefcase, CalendarCheck, FileText, BookOpen, Receipt, Settings, ShieldCheck, MoreHorizontal, LogOut, GraduationCap, UserCircle,
+  Home, Users, Briefcase, CalendarCheck, FileText, BookOpen, Receipt, Settings, ShieldCheck, MoreHorizontal, LogOut, UserCircle, Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MOBILE_PRIORITY, NAV } from "./nav-config";
 import { accountLabel, type AccessSubject } from "@/lib/access";
 import { signOut } from "@/app/login/actions";
 import { InstallNavButton } from "./install-app";
+import { BrandMark } from "./brand-mark";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
 const ICONS = {
   home: Home, users: Users, briefcase: Briefcase, calendar: CalendarCheck,
-  "file-text": FileText, book: BookOpen, receipt: Receipt, settings: Settings, shield: ShieldCheck,
+  "file-text": FileText, book: BookOpen, receipt: Receipt, wallet: Wallet, settings: Settings, shield: ShieldCheck,
 } as const;
 
 const SHORT: Record<string, string> = { "/materi": "Materi", "/tentor": "Tentor" };
 
-type Props = { access: AccessSubject; nama: string; namaBimbel: string };
+type Props = { access: AccessSubject; nama: string; namaBimbel: string; logoId?: string | null };
 
 /** Menu yang boleh dilihat akun ini (berdasarkan akses per modul, bukan peran). */
 function useItems(access: AccessSubject) {
@@ -34,15 +35,13 @@ function isActive(path: string, href: string) {
   return href === "/" ? path === "/" : path.startsWith(href);
 }
 
-export function Sidebar({ access, nama, namaBimbel }: Props) {
+export function Sidebar({ access, nama, namaBimbel, logoId = null }: Props) {
   const path = usePathname();
   const items = useItems(access);
   return (
     <aside className="glass sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r md:flex">
       <div className="flex items-center gap-2 px-4 py-5">
-        <div className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-          <GraduationCap className="size-5" />
-        </div>
+        <BrandMark logoId={logoId} className="size-9 rounded-xl" iconClassName="size-5" />
         <div className="min-w-0">
           <p className="truncate text-sm font-bold">{namaBimbel}</p>
           <p className="text-xs text-muted-foreground">{accountLabel(access)}</p>
@@ -159,7 +158,7 @@ export function BottomNav({ access, nama }: Props) {
 }
 
 /** Top bar HP: kaca, lengket di atas, supaya bagian atas halaman tetap jelas terbaca. */
-export function MobileTopBar({ access, nama, namaBimbel }: Props) {
+export function MobileTopBar({ access, nama, namaBimbel, logoId = null }: Props) {
   const path = usePathname();
   const initials = nama
     .split(/\s+/)
@@ -170,9 +169,7 @@ export function MobileTopBar({ access, nama, namaBimbel }: Props) {
   return (
     <header className="glass sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b px-4 pt-[env(safe-area-inset-top)] md:hidden">
       <Link href="/" className="flex min-w-0 items-center gap-2.5">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <GraduationCap className="size-4.5" />
-        </span>
+        <BrandMark logoId={logoId} className="size-8 rounded-lg" iconClassName="size-4.5" />
         <span className="min-w-0">
           <span className="block truncate text-sm leading-tight font-bold">{namaBimbel}</span>
           <span className="block truncate text-[11px] leading-tight text-muted-foreground">{accountLabel(access)}</span>

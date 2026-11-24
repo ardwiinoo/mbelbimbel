@@ -1,7 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { files, materials, progressReports, sessions } from "@/db/schema";
-import { deleteFile, saveFile } from "@/lib/storage";
+import { files, materials, progressReports, sessions, users } from "@/db/schema";
+import { deleteFile, getFile, saveFile } from "@/lib/storage";
 import { can } from "@/lib/access";
 import type { Actor } from "./authz";
 import { validateUpload, type FileKind } from "./file-rules";
@@ -40,6 +40,8 @@ export type FileRow = typeof files.$inferSelect;
  * - assessment : akses Asesmen (Lihat)
  * - attendance : akses Jadwal (Lihat), ATAU tentor pemilik sesi yang memakai foto ini
  * - report     : akses Laporan (Lihat), ATAU tentor pengunggah laporan (belum dihapus)
+ * - signature  : hanya pemilik tanda tangan itu (dicetak ke slip lewat server, bukan lewat URL ini)
+ * - logo       : semua akun aktif (logo bimbel tidak rahasia)
  * - material   : akses Bank Materi (Lihat), selama materinya belum dihapus
  *                (pemegang Kelola tetap bisa membuka file materi yang dihapus)
  */
@@ -52,6 +54,15 @@ export async function findReadableFile(actor: Actor, fileId: string): Promise<Fi
   switch (f.kind) {
     case "assessment":
       return can(actor, "asesmen", "read") ? f : null;
+    case "logo":
+      return f;
+    case "signature":
+      rows = await db()
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.id, actor.id), eq(users.ttdFileId, f.id)))
+        .limit(1);
+      break;
     case "attendance":
       if (can(actor, "jadwal", "read")) return f;
       if (!actor.isTutor) return null;
@@ -99,5 +110,20 @@ export async function purgeStoredFiles(keys: (string | null | undefined)[]) {
   for (const key of keys) {
     if (!key) continue;
     await deleteFile(key).catch((e) => console.error("[storage] gagal hapus file lama", key, e));
+  }
+}
+
+/** Baca isi file kecil (logo, tanda tangan) ke memori untuk disematkan ke PDF. Null bila tidak ada / hilang dari disk. */
+export async function readStoredFile(fileId: string | null | undefined): Promise<{ data: Buffer; mime: string; format: "png" | "jpg" } | null> {
+  if (!fileId) return null;
+  const [f] = await db().select({ key: files.storageKey, mime: files.mime }).from(files).where(eq(files.id, fileId)).limit(1);
+  if (!f) return null;
+  try {
+    const { stream } = await getFile(f.key);
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    return { data: Buffer.concat(chunks), mime: f.mime, format: f.mime === "image/png" ? "png" : "jpg" };
+  } catch {
+    return null;
   }
 }

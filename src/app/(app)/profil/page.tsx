@@ -1,12 +1,13 @@
 import { requireProfile } from "@/lib/auth";
-import { accountLabel, levelOf, MODULES } from "@/lib/access";
+import { accountLabel, can, levelOf, MODULES } from "@/lib/access";
 import { Pill } from "@/components/app/ui";
 import { tanggal } from "@/lib/format";
 import { PageHeader } from "@/components/app/ui";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InstallCard } from "@/components/app/install-app";
+import { ImageUpload } from "@/components/app/image-upload";
 import { getOwnProfile } from "@/server/services/users";
-import { EmailForm, PasswordForm } from "./forms";
+import { EmailForm, PasswordForm, ProfileForm } from "./forms";
 
 export const metadata = { title: "Profil" };
 
@@ -16,7 +17,7 @@ export default async function ProfilPage() {
 
   return (
     <>
-      <PageHeader title="Profil Saya" desc="Data akun, ganti email & password login, dan pasang aplikasi." />
+      <PageHeader title="Profil Saya" desc="Data diri, ganti email & password login, dan pasang aplikasi." />
       <div className="grid max-w-3xl gap-4">
         <Card>
           <CardHeader>
@@ -33,6 +34,16 @@ export default async function ProfilPage() {
             <p>
               <span className="text-muted-foreground">No. WhatsApp:</span> {p.noWa ?? "-"}
             </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Ubah Nama & No. WhatsApp</CardTitle>
+            <CardDescription>Langsung berlaku, tanpa verifikasi.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ProfileForm nama={p.nama} noWa={p.noWa} />
           </CardContent>
         </Card>
 
@@ -56,6 +67,27 @@ export default async function ProfilPage() {
             {!p.isTutor && !p.isSuperuser && !Object.keys(p.perms).length && <span className="text-sm text-muted-foreground">Belum ada akses.</span>}
           </CardContent>
         </Card>
+
+        {can(p, "honor", "read") && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Tanda Tangan untuk Slip Honor</CardTitle>
+              <CardDescription>
+                Dicetak di slip honor yang Anda tandai lunas. Kosongkan bila tidak ingin ada gambar tanda tangan (nama tetap tampil).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ImageUpload
+                endpoint="/api/profile/signature"
+                fileId={p.ttdFileId}
+                alt="Tanda tangan"
+                emptyText="Belum ada tanda tangan"
+                removeTitle="Hapus tanda tangan?"
+                hint="PNG latar transparan atau JPG, maks 2 MB. Hanya Anda yang bisa melihat file ini; server memakainya saat mencetak slip."
+              />
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>

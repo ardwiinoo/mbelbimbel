@@ -2,7 +2,8 @@
 // (SEED_DEMO=true pada DB kosong). Memakai service yang sama dengan aplikasi.
 import { count } from "drizzle-orm";
 import { db } from "@/db";
-import { appSettings, files, materials, programs, progressReports, sessions, studentAssessments, studentPrograms, students, userPermissions, users } from "@/db/schema";
+import { appSettings, files, materials, programs, progressReports, sessions, studentAssessments, studentPrograms, students, tutorHonorRates, userPermissions, users } from "@/db/schema";
+import type { MapelKey } from "@/lib/mapel";
 import { PRESETS } from "@/lib/access";
 import { saveFile } from "@/lib/storage";
 import type { Actor } from "./authz";
@@ -65,9 +66,11 @@ export async function seedDemo(log: (m: string) => void = console.log) {
       alamat: "Jl. Parangtritis Km 5, Bantul, Yogyakarta",
       rekening: "BCA 1234567890 a.n. Bimbel Cerdas Bantul\nBRI 0987-01-000123-50-1 a.n. Bimbel Cerdas Bantul",
       waAdmin: "0811-2233-4455",
+      tagline: "Lembaga Bimbingan Belajar & Pendampingan Anak",
+      kota: "Bantul",
       linkDriveKonten: "https://drive.google.com/drive/folders/contoh-folder-konten",
     })
-    .onConflictDoUpdate({ target: appSettings.id, set: { namaBimbel: "Bimbel Cerdas Bantul", waAdmin: "0811-2233-4455" } });
+    .onConflictDoUpdate({ target: appSettings.id, set: { namaBimbel: "Bimbel Cerdas Bantul", waAdmin: "0811-2233-4455", tagline: "Lembaga Bimbingan Belajar & Pendampingan Anak", kota: "Bantul" } });
 
   /** Buat akun dari paket akses (lihat PRESETS di src/lib/access.ts). */
   const mk = async (
@@ -77,11 +80,13 @@ export async function seedDemo(log: (m: string) => void = console.log) {
     noWa: string,
     spesialisasi: string | null = null,
     createdBy: string | null = null,
+    mapelKategori: MapelKey | null = null,
+    honor: { tarif: number; rekening: string } | null = null,
   ) => {
     const p = preset === "super" ? null : PRESETS.find((x) => x.key === preset)!;
     const [u] = await db()
       .insert(users)
-      .values({ email, passwordHash: pw, nama, noWa, spesialisasi, isSuperuser: preset === "super", isTutor: p?.isTutor ?? false, createdBy, updatedBy: createdBy })
+      .values({ email, passwordHash: pw, nama, noWa, spesialisasi, mapelKategori, tarifHonor: honor?.tarif ?? 0, rekening: honor?.rekening ?? null, isSuperuser: preset === "super", isTutor: p?.isTutor ?? false, createdBy, updatedBy: createdBy })
       .returning({ id: users.id });
     const rows = Object.entries(p?.perms ?? {}).map(([module, level]) => ({ userId: u.id, module, level: level! }));
     if (rows.length) await db().insert(userPermissions).values(rows);
@@ -89,19 +94,21 @@ export async function seedDemo(log: (m: string) => void = console.log) {
   };
   const superId = await mk("superadmin@bimbel.test", "Pak Owner", "super", "0811-0000-0001");
   const adminId = await mk("admin@bimbel.test", "Admin Bimbel", "admin", "0811-2233-4455", null, superId);
-  const aulia = await mk("aulia@bimbel.test", "Kak Aulia", "tentor", "0812-1111-2222", "Calistung, SD Umum", superId);
-  const dimas = await mk("dimas@bimbel.test", "Kak Dimas", "tentor", "0813-3333-4444", "ABK, Pendampingan Fokus", superId);
-  const rina = await mk("rina@bimbel.test", "Kak Rina", "tentor", "0856-5555-6666", "Fisika, Matematika SMP", superId);
+  const aulia = await mk("aulia@bimbel.test", "Kak Aulia", "tentor", "0812-1111-2222", "Calistung, SD Umum", superId, "calistung", { tarif: 35000, rekening: "BCA 1234567890 a.n. Aulia Rahma" });
+  const dimas = await mk("dimas@bimbel.test", "Kak Dimas", "tentor", "0813-3333-4444", "ABK, Pendampingan Fokus", superId, "abk", { tarif: 50000, rekening: "GoPay 0813-3333-4444" });
+  const rina = await mk("rina@bimbel.test", "Kak Rina", "tentor", "0856-5555-6666", "Fisika, Matematika SMP", superId, "fisika_ipa", { tarif: 40000, rekening: "BRI 0987654321 a.n. Rina Wulandari" });
+  // Contoh tarif khusus per mapel: Kak Aulia mengajar Calistung (standar Rp 35.000) dan sesekali ABK (Rp 55.000)
+  await db().insert(tutorHonorRates).values({ tutorId: aulia, mapelKategori: "abk", tarif: 55000 });
   // Contoh kebutuhan "admin sekaligus tentor"
-  await mk("bayu@bimbel.test", "Kak Bayu", "admin_tentor", "0857-7777-8888", "TKA SD, Matematika", superId);
+  await mk("bayu@bimbel.test", "Kak Bayu", "admin_tentor", "0857-7777-8888", "TKA SD, Matematika", superId, "matematika", { tarif: 40000, rekening: "DANA 0857-7777-8888" });
 
   const progs = await db()
     .insert(programs)
     .values([
-      { nama: "Privat Calistung", kategori: "privat", jenjang: "TK / SD", tarifPerPertemuan: 60000 },
-      { nama: "ABK Calistung", kategori: "abk", jenjang: "TK / SD", tarifPerPertemuan: 100000 },
-      { nama: "Kelompok Fisika", kategori: "kelompok", jenjang: "SMP", tarifPerPertemuan: 50000 },
-      { nama: "Privat TKA SD", kategori: "privat", jenjang: "6 SD", tarifPerPertemuan: 75000 },
+      { nama: "Privat Calistung", kategori: "privat", mapelKategori: "calistung", jenjang: "TK / SD", tarifPerPertemuan: 60000 },
+      { nama: "ABK Calistung", kategori: "abk", mapelKategori: "abk", jenjang: "TK / SD", tarifPerPertemuan: 100000 },
+      { nama: "Kelompok Fisika", kategori: "kelompok", mapelKategori: "fisika_ipa", jenjang: "SMP", tarifPerPertemuan: 50000 },
+      { nama: "Privat TKA SD", kategori: "privat", mapelKategori: "tematik", jenjang: "6 SD", tarifPerPertemuan: 75000 },
     ])
     .returning({ id: programs.id, nama: programs.nama });
   const P = Object.fromEntries(progs.map((p) => [p.nama, p.id]));
@@ -110,9 +117,9 @@ export async function seedDemo(log: (m: string) => void = console.log) {
   const sts = await db()
     .insert(students)
     .values([
-      { nama: "Alya Putri", tanggalLahir: `${y - 8}-03-14`, kelas: "Kelas 2 SD", sekolah: "SDIT Al-Hikmah", alamat: "Jl. Merpati No. 12, Bantul", ortuNama: "Bapak Hendra", ortuWa: "0813-9876-5432" },
+      { nama: "Alya Putri", panggilan: "Alya", tanggalLahir: `${y - 8}-03-14`, kelas: "Kelas 2 SD", sekolah: "SDIT Al-Hikmah", alamat: "Jl. Merpati No. 12, Bantul", ortuNama: "Bapak Hendra", ortuWa: "0813-9876-5432" },
       { nama: "Budi Utama", tanggalLahir: `${y - 10}-01-20`, kelas: "Kelas 4 SD", sekolah: "SDN 1 Potorono", alamat: "Perum Griya Indah Blok B", ortuNama: "Ibu Sari", ortuWa: "0812-3456-7890" },
-      { nama: "Siti Aminah", tanggalLahir: `${y - 14}-02-02`, kelas: "Kelas 8 SMP", sekolah: "SMPN 2 Banguntapan", alamat: "Jl. Wonosari Km 7", ortuNama: "Ibu Ratna", ortuWa: "0857-1122-3344" },
+      { nama: "Siti Aminah", panggilan: "Siti", tanggalLahir: `${y - 14}-02-02`, kelas: "Kelas 8 SMP", sekolah: "SMPN 2 Banguntapan", alamat: "Jl. Wonosari Km 7", ortuNama: "Ibu Ratna", ortuWa: "0857-1122-3344" },
     ])
     .returning({ id: students.id, nama: students.nama });
   const S = Object.fromEntries(sts.map((s) => [s.nama, s.id]));
