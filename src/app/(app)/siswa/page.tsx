@@ -13,6 +13,7 @@ export default async function SiswaPage() {
     viewAll: can(me, "siswa", "read"),
     manage: can(me, "siswa", "write"),
     asesmen: levelOf(me, "asesmen"),
+    waive: can(me, "invoice", "write"),
   };
 
   // Service menerapkan hak akses: tanpa akses Siswa (tentor) hanya siswanya; asesmen hanya bila berhak.

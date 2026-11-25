@@ -43,6 +43,13 @@
       "when": 1795526568929,
       "tag": "0005_catat_pelaku",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795573710025,
+      "tag": "0006_bebaskan_tagihan",
+      "breakpoints": true
     }
   ]
 }

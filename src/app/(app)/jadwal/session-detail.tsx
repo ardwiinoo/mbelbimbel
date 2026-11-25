@@ -1,7 +1,10 @@
 "use client";
 // Pop-up detail sebuah sesi di Resource Timeline: bukti kehadiran + aksi cepat admin.
 import type { ReactNode } from "react";
-import { AlertTriangle, Check, MapPin, MessageCircle, Pencil, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Check, MapPin, MessageCircle, Pencil, ShieldCheck, Undo2 } from "lucide-react";
+import { toast } from "sonner";
+import { useTransition } from "react";
+import { undoWaiveSession } from "./actions";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { FormDialog } from "@/components/app/form-dialog";
 import { Pill, KEHADIRAN } from "@/components/app/ui";
@@ -42,6 +45,7 @@ export function SessionDetail({
   tutor,
   now,
   canManage,
+  isSuperuser = false,
   conflicts,
   absenSlot,
   onEdit,
@@ -52,6 +56,8 @@ export function SessionDetail({
   tutor: TimelineTutor | undefined;
   now: number;
   canManage: boolean;
+  /** Super Admin: boleh membatalkan pembebasan tagihan */
+  isSuperuser?: boolean;
   /** Sesi lain yang bentrok dengan sesi ini (kosong = aman). */
   conflicts: { session: SessionRow; kinds: ConflictKind[] }[];
   /** Tombol Absen bila sesi ini milik akun yang sedang login (admin sekaligus tentor). */
@@ -61,6 +67,8 @@ export function SessionDetail({
   onClose: () => void;
 }) {
   const vs = visualStatus(s, now);
+  const [undoing, startUndo] = useTransition();
+  const canUndoWaive = isSuperuser && s.status_kehadiran === "hadir" && s.status_tagihan === "dibebaskan";
   const m = useMapel().of(s.programs?.mapel);
   const editable = canManage && s.status_tagihan === "belum_rekap";
   const lateMin = s.absen_at ? Math.round((new Date(s.absen_at).getTime() - new Date(s.mulai_at).getTime()) / 60_000) : 0;
@@ -90,6 +98,7 @@ export function SessionDetail({
             {STATUS_TEXT[vs].label}
           </span>
           {s.status_kehadiran === "hadir" && s.status_tagihan === "terekap" && <Pill color="blue">Sudah masuk invoice</Pill>}
+          {s.status_kehadiran === "hadir" && s.status_tagihan === "dibebaskan" && <Pill color="gray">Tagihan dibebaskan</Pill>}
         </Row>
         {s.absen_at && (
           <Row label="Jam absen">
@@ -143,6 +152,24 @@ export function SessionDetail({
           <a href={waLink(tutor.no_wa, remindText)} target="_blank" rel="noopener" className={cn(buttonVariants({ variant: "outline" }), "mr-auto text-emerald-700")}>
             <MessageCircle /> Ingatkan via WA
           </a>
+        )}
+        {canUndoWaive && (
+          <Button
+            variant="outline"
+            className="text-destructive hover:text-destructive"
+            disabled={undoing}
+            onClick={() =>
+              startUndo(async () => {
+                const r = await undoWaiveSession(s.id);
+                if (r.ok) {
+                  toast.success(r.message);
+                  onClose();
+                } else toast.error(r.error);
+              })
+            }
+          >
+            <Undo2 /> Batalkan pembebasan tagihan
+          </Button>
         )}
         {editable && (
           <>

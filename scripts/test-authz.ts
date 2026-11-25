@@ -744,6 +744,68 @@ async function main() {
     await stu.saveStudent(admin, { ...stuBase, programs: [...progsKeep, { program_id: progA.id, tutor_id: aulia.id }] });
     await db().delete(sessions).where(inArray(sessions.id, [sFree.id, sOrph.id]));
 
+    // --- hapus siswa: ringkasan, blokir bila ada tagihan terbuka, bebaskan tagihan, batalkan sesi terjadwal ---
+    const progH = (await master.listProgramsWithTarif(admin)).find((p) => p.aktif)!;
+    const hs = await stu.saveStudent(admin, { nama: "Uji Hapus Siswa", status: "aktif", programs: [{ program_id: progH.id, tutor_id: aulia.id }] });
+    const [spH] = await db().select().from(studentPrograms).where(eq(studentPrograms.studentId, hs.id));
+    for (const tgl of ["2019-06-03", "2019-06-10"]) await ses.createSessions(admin, { student_program_id: spH.id, tutor_id: aulia.id, tanggal: tgl, jam_mulai: "13:00", jam_selesai: "14:00", ulang_minggu: 1 });
+    await ses.createSessions(admin, { student_program_id: spH.id, tutor_id: aulia.id, tanggal: "2099-01-05", jam_mulai: "13:00", jam_selesai: "14:00", ulang_minggu: 2 });
+    const sesH = await db().select().from(sessions).where(eq(sessions.studentId, hs.id)).orderBy(sessions.mulaiAt);
+    for (const s of sesH.slice(0, 2)) await ses.setAttendanceStatus(admin, s.id, "hadir", "uji hapus siswa");
+
+    const sum1 = await stu.studentDeleteSummary(admin, hs.id);
+    check("hapus siswa: ringkasan menghitung sesi Hadir belum ditagih & sesi terjadwal", sum1.hadir_belum_ditagih === 2 && sum1.sesi_terjadwal === 2 && sum1.invoice_belum_lunas === 0, JSON.stringify(sum1));
+    await rejects("hapus siswa: tentor tidak bisa melihat ringkasan", () => stu.studentDeleteSummary(aulia, hs.id), /tidak punya akses/);
+    await rejects("hapus siswa: ditolak bila masih ada sesi Hadir belum ditagih", () => stu.softDeleteStudent(admin, hs.id), /belum ditagih/);
+
+    // invoice belum lunas juga memblokir
+    const invH = await inv.issueInvoice(admin, hs.id, progH.id, [sesH[0].id]);
+    const sum2 = await stu.studentDeleteSummary(admin, hs.id);
+    check("hapus siswa: ringkasan memuat invoice belum lunas", sum2.invoice_belum_lunas === 1 && sum2.hadir_belum_ditagih === 1, JSON.stringify(sum2));
+    await inv.deleteInvoice(admin, invH.id); // invoice tidak jadi → sesi kembali Siap Tagih
+
+    // bebaskan tagihan: hanya akses Kelola Invoice; sesi tidak dihapus & tidak lagi muncul di Siap Tagih
+    await rejects("bebaskan tagihan: tentor ditolak", () => stu.waiveStudentBilling(aulia, hs.id), /tidak punya akses/);
+    await stu.waiveStudentBilling(admin, hs.id);
+    const bebas = await db().select().from(sessions).where(and(eq(sessions.studentId, hs.id), eq(sessions.statusKehadiran, "hadir")));
+    check("bebaskan tagihan: sesi Hadir berstatus dibebaskan (tidak dihapus)", bebas.length === 2 && bebas.every((s) => s.statusTagihan === "dibebaskan"));
+    check("bebaskan tagihan: tidak muncul lagi di Daftar Siap Tagih", !(await inv.listReadyToBill(admin)).some((s) => s.student_id === hs.id));
+    check("bebaskan tagihan: tercatat di audit log (siapa)", (await db().select().from(auditLog).where(and(eq(auditLog.target, hs.id), eq(auditLog.aksi, "bebaskan_tagihan")))).some((a) => a.actorId === admin.id));
+    await rejects("bebaskan tagihan: tanpa sesi yang perlu dibebaskan ditolak", () => stu.waiveStudentBilling(admin, hs.id), /Tidak ada sesi/);
+    await rejects("batal bebaskan: admin biasa ditolak (hanya Super Admin)", () => inv.undoWaiveSession(admin, bebas[0].id), /Hanya Super Admin/);
+    await inv.undoWaiveSession(sup, bebas[0].id);
+    const [kembali] = await db().select().from(sessions).where(eq(sessions.id, bebas[0].id));
+    check("batal bebaskan (Super Admin): sesi kembali ke Siap Tagih & tercatat", kembali.statusTagihan === "belum_rekap" && (await inv.listReadyToBill(admin)).some((s) => s.id === bebas[0].id) && (await db().select().from(auditLog).where(and(eq(auditLog.target, bebas[0].id), eq(auditLog.aksi, "batal_bebaskan_tagihan")))).some((a) => a.actorId === sup.id));
+    await rejects("batal bebaskan: sesi yang tidak dibebaskan ditolak", () => inv.undoWaiveSession(sup, bebas[0].id), /tidak berstatus tagihan dibebaskan/);
+    await stu.waiveStudentBilling(admin, hs.id); // bebaskan lagi agar alur hapus di bawah tetap jalan
+    await rejects("sesi dibebaskan tidak bisa diterbitkan invoice", () => inv.issueInvoice(admin, hs.id, progH.id, [bebas[0].id]), /sudah terekap atau tidak valid/);
+
+    // setelah bersih: hapus berhasil, sesi terjadwal dibatalkan, sesi Hadir (arsip) tetap
+    await rejects("hapus siswa: tentor ditolak", () => stu.softDeleteStudent(aulia, hs.id), /tidak punya akses/);
+    const delMsg = await stu.softDeleteStudent(admin, hs.id);
+    const after = await db().select().from(sessions).where(eq(sessions.studentId, hs.id));
+    check("hapus siswa: sesi terjadwal dibatalkan otomatis", after.filter((s) => s.statusKehadiran === "batal").length === 2 && /2 sesi terjadwal dibatalkan/.test(delMsg), delMsg);
+    check("hapus siswa: riwayat sesi Hadir tetap ada sebagai arsip", after.filter((s) => s.statusKehadiran === "hadir").length === 2);
+    const [hsRow] = await db().select().from(students).where(eq(students.id, hs.id));
+    check("hapus siswa: ditandai terhapus (soft delete) & tercatat siapa", !!hsRow.deletedAt && hsRow.deletedBy === admin.id);
+    await rejects("hapus siswa: sudah terhapus → tidak ditemukan", () => stu.softDeleteStudent(admin, hs.id), /tidak ditemukan/);
+
+    // data terhapus: hanya Super Admin; pulihkan mengembalikan siswa & sesi yang dibatalkan otomatis (jam belum lewat)
+    await rejects("data terhapus: admin biasa tidak bisa melihat daftar", () => stu.listDeletedStudents(admin), /Hanya Super Admin/);
+    await rejects("data terhapus: admin biasa tidak bisa memulihkan", () => stu.restoreStudent(admin, hs.id), /Hanya Super Admin/);
+    const delRow = (await stu.listDeletedStudents(sup)).find((r) => r.id === hs.id);
+    check("data terhapus: daftar memuat siswa + ringkasan data terkait", !!delRow && delRow.sesi_hadir === 2 && delRow.sesi_dibebaskan === 2 && delRow.sesi_batal_otomatis === 2 && delRow.deleted_by === admin.nama, JSON.stringify(delRow));
+    const restoreMsg = await stu.restoreStudent(sup, hs.id);
+    const [hsBack] = await db().select().from(students).where(eq(students.id, hs.id));
+    const afterRestore = await db().select().from(sessions).where(eq(sessions.studentId, hs.id));
+    check("pulihkan siswa: aktif kembali & penanda hapus bersih", !hsBack.deletedAt && hsBack.status === "aktif" && !hsBack.deletedBy);
+    check("pulihkan siswa: sesi batal otomatis (jam belum lewat) kembali terjadwal", afterRestore.filter((s) => s.statusKehadiran === "terjadwal").length === 2 && /2 sesi terjadwal dikembalikan/.test(restoreMsg), restoreMsg);
+    check("pulihkan siswa: tercatat di audit log (Super Admin)", (await db().select().from(auditLog).where(and(eq(auditLog.target, hs.id), eq(auditLog.aksi, "pulihkan_siswa")))).some((a) => a.actorId === sup.id));
+    await rejects("pulihkan siswa: yang tidak terhapus ditolak", () => stu.restoreStudent(sup, hs.id), /tidak ditemukan/);
+    await stu.softDeleteStudent(admin, hs.id); // hapus lagi agar kondisi akhir sama seperti sebelumnya
+    // bersihkan data uji agar blok lain tak terpengaruh
+    await db().delete(sessions).where(eq(sessions.studentId, hs.id));
+
     // --- honor: tarif, tunjangan, lunas oleh admin berbeda ---
     await master.saveTutor(admin, { ...tutorBase, tarif_honor: 36000 });
     const [audTarif] = await db().select().from(auditLog).where(eq(auditLog.aksi, "ubah_tarif_honor")).orderBy(sql`${auditLog.id} desc`).limit(1);

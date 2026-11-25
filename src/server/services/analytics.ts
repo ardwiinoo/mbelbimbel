@@ -73,7 +73,8 @@ export async function monthlyAnalytics(actor: Actor, monthInput?: string): Promi
     const rekap = { terekap: 0, belum: 0 };
     for (const r of statusRows) {
       byStatus[r.status] += r.n;
-      if (r.status === "hadir") rekap[r.tagihan === "terekap" ? "terekap" : "belum"] += r.n;
+      if (r.status === "hadir" && r.tagihan === "terekap") rekap.terekap += r.n;
+      else if (r.status === "hadir" && r.tagihan === "belum_rekap") rekap.belum += r.n; // "dibebaskan" tidak ditagih, jadi tidak dihitung
     }
     const weekly = [0, 0, 0, 0, 0];
     for (const w of weekRows) weekly[w.week - 1] = w.n;

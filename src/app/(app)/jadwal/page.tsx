@@ -23,7 +23,7 @@ const ymd = (v: string) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "");
 
 export default async function JadwalPage({ searchParams }: PageProps<"/jadwal">) {
   const profile = await requireAccessOrTutor("jadwal");
-  const perm = { viewAll: can(profile, "jadwal", "read"), manage: can(profile, "jadwal", "write") };
+  const perm = { viewAll: can(profile, "jadwal", "read"), manage: can(profile, "jadwal", "write"), superuser: profile.isSuperuser };
   const isAdmin = perm.viewAll;
   const sp = await searchParams;
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : "");

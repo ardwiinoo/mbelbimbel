@@ -1,6 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
-import { runAction } from "@/lib/action";
+import { currentActor, runAction, toUserMessage } from "@/lib/action";
 import * as svc from "@/server/services/students";
 
 export type { StudentInput } from "@/server/services/students";
@@ -19,6 +19,29 @@ export async function saveStudent(input: svc.StudentInput) {
 
 export async function softDeleteStudent(id: string) {
   const r = await runAction((actor) => svc.softDeleteStudent(actor, id));
-  if (r.ok) revalidatePath("/siswa");
+  if (r.ok) {
+    revalidatePath("/siswa");
+    revalidatePath("/jadwal");
+    revalidatePath("/");
+  }
+  return r;
+}
+
+/** Data terkait yang perlu diketahui admin sebelum menghapus siswa. */
+export async function loadStudentDeleteSummary(id: string) {
+  try {
+    return { ok: true as const, data: await svc.studentDeleteSummary(await currentActor(), id) };
+  } catch (e) {
+    return { ok: false as const, error: toUserMessage(e) };
+  }
+}
+
+export async function waiveStudentBilling(id: string) {
+  const r = await runAction((actor) => svc.waiveStudentBilling(actor, id));
+  if (r.ok) {
+    revalidatePath("/invoice");
+    revalidatePath("/siswa");
+    revalidatePath("/");
+  }
   return r;
 }

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
-  Home, Users, Briefcase, CalendarCheck, FileText, BookOpen, Receipt, Settings, ShieldCheck, MoreHorizontal, LogOut, UserCircle, Wallet,
+  ArchiveRestore, Home, Users, Briefcase, CalendarCheck, FileText, BookOpen, Receipt, Settings, ShieldCheck, MoreHorizontal, LogOut, UserCircle, Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MOBILE_PRIORITY, NAV } from "./nav-config";
@@ -15,7 +15,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 
 const ICONS = {
   home: Home, users: Users, briefcase: Briefcase, calendar: CalendarCheck,
-  "file-text": FileText, book: BookOpen, receipt: Receipt, wallet: Wallet, settings: Settings, shield: ShieldCheck,
+  "file-text": FileText, book: BookOpen, receipt: Receipt, wallet: Wallet, settings: Settings, shield: ShieldCheck, archive: ArchiveRestore,
 } as const;
 
 const SHORT: Record<string, string> = { "/materi": "Materi", "/tentor": "Tentor" };
