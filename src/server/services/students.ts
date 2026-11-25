@@ -142,7 +142,7 @@ export const studentSchema = z.object({
   ortu_wa: opt,
   status: z.enum(["aktif", "nonaktif"]),
   programs: z
-    .array(z.object({ program_id: z.string().uuid(), tutor_id: z.string().uuid().nullable() }))
+    .array(z.object({ program_id: z.string().uuid(), tutor_id: z.string().uuid().nullable(), /** program asal baris ini sebelum diganti (dikirim form agar pasangan lama→baru jelas) */ dari: z.string().uuid().nullish() }))
     .refine((a) => new Set(a.map((x) => x.program_id)).size === a.length, "Program tidak boleh dobel"),
 });
 export type StudentInput = z.input<typeof studentSchema>;
@@ -195,35 +195,50 @@ export async function saveStudent(actor: Actor | null, input: StudentInput) {
         });
     }
 
-    // Program diganti (satu keluar, satu masuk): sesi yang BELUM direkap/ditagih ikut pindah ke program baru, sehingga
-    // tagihannya memakai tarif program baru. Sesi yang sudah masuk invoice (data lama) tidak disentuh. Honor yang sudah lunas tetap utuh karena tarifnya sudah di-snapshot per sesi.
-    let note = "";
-    if (removed.length === 1 && added.length === 1) {
+    // Program diganti: sesi yang BELUM direkap/ditagih ikut pindah ke program baru, sehingga tagihannya memakai tarif baru.
+    // Sesi yang sudah masuk invoice (data lama) tidak disentuh; honor yang sudah lunas tetap utuh (tarif di-snapshot per sesi).
+    // Pasangan lama→baru diambil dari baris form (dari → program_id). Sisa sesi dari program yang tidak lagi diikuti
+    // dan tak berpasangan ikut ke satu program tujuan yang jelas (program baru yang belum berpasangan, atau satu-satunya pasangan).
+    const pairs = progs.filter((p) => p.dari && p.dari !== p.program_id && !keep.includes(p.dari) && before.includes(p.dari)).map((p) => ({ dari: p.dari!, ke: p.program_id }));
+    const pairedFrom = new Set(pairs.map((x) => x.dari));
+    const pairedTo = new Set(pairs.map((x) => x.ke));
+    const unpairedAdded = added.filter((x) => !pairedTo.has(x));
+    const plan = [...pairs];
+    // Sisa sesi (dari program yang dilepas / sudah yatim) ikut ke satu program tujuan yang jelas
+    const leftoverTarget = unpairedAdded.length === 1 ? unpairedAdded[0] : pairs.length === 1 && unpairedAdded.length === 0 ? pairs[0].ke : null;
+    if (removed.length > 0 && leftoverTarget) plan.push({ dari: "*", ke: leftoverTarget });
+    const movedInfo: { dari: string; ke: string; n: number }[] = [];
+    for (const step of plan) {
+      const cond = [eq(sessions.studentId, studentId!), eq(sessions.statusTagihan, "belum_rekap"), isNull(sessions.invoiceId)];
+      if (step.dari === "*") {
+        // sisa: semua sesi belum ditagih dari program yang tidak diikuti lagi dan belum dipasangkan
+        const skip = [...keep, ...pairedFrom];
+        cond.push(notInArray(sessions.programId, skip));
+      } else {
+        cond.push(eq(sessions.programId, step.dari));
+      }
       const moved = await tx
         .update(sessions)
-        .set({ programId: added[0], updatedAt: new Date(), updatedBy: actor.id })
-        .where(
-          and(
-            eq(sessions.studentId, studentId!),
-            notInArray(sessions.programId, keep), // program yang sudah tidak diikuti (yang dilepas maupun sisa sesi lama)
-            eq(sessions.statusTagihan, "belum_rekap"),
-            isNull(sessions.invoiceId),
-          ),
-        )
+        .set({ programId: step.ke, updatedAt: new Date(), updatedBy: actor.id })
+        .where(and(...cond))
         .returning({ id: sessions.id });
-      if (moved.length) {
-        const [np] = await tx.select({ nama: programs.nama, tarif: programs.tarifPerPertemuan }).from(programs).where(eq(programs.id, added[0]));
-        const [op] = await tx.select({ nama: programs.nama }).from(programs).where(eq(programs.id, removed[0]));
-        await tx.insert(auditLog).values({
-          actorId: actor.id,
-          aksi: "pindah_program_sesi",
-          target: studentId!,
-          detail: { dari: op?.nama, ke: np?.nama, sesi: moved.length },
-        });
-        note = `. ${moved.length} sesi yang belum ditagih dipindah ke ${np?.nama} (${rupiah(np?.tarif ?? 0)} / pertemuan)`;
-      }
-    } else if (removed.length > 0 && added.length > 0) {
-      note = ". Beberapa program berubah sekaligus, sesi yang sudah ada tidak dipindahkan otomatis";
+      if (moved.length) movedInfo.push({ dari: step.dari, ke: step.ke, n: moved.length });
+    }
+    let note = "";
+    if (movedInfo.length) {
+      const ids = [...new Set(movedInfo.flatMap((m) => [m.ke, ...(m.dari === "*" ? [] : [m.dari])]))];
+      const names = new Map((await tx.select({ id: programs.id, nama: programs.nama, tarif: programs.tarifPerPertemuan }).from(programs).where(inArray(programs.id, ids))).map((p) => [p.id, p] as const));
+      const total = movedInfo.reduce((s, m) => s + m.n, 0);
+      const ringkas = [...new Set(movedInfo.map((m) => m.ke))].map((k) => `${names.get(k)?.nama} (${rupiah(names.get(k)?.tarif ?? 0)} / pertemuan)`).join(", ");
+      await tx.insert(auditLog).values({
+        actorId: actor.id,
+        aksi: "pindah_program_sesi",
+        target: studentId!,
+        detail: { sesi: total, pindah: movedInfo.map((m) => ({ dari: m.dari === "*" ? "program lama" : names.get(m.dari)?.nama, ke: names.get(m.ke)?.nama, sesi: m.n })) },
+      });
+      note = `. ${total} sesi yang belum ditagih dipindah ke ${ringkas}`;
+    } else if (removed.length > 0 && added.length > 0 && pairs.length === 0 && unpairedAdded.length !== 1) {
+      note = ". Beberapa program berubah tanpa pasangan yang jelas, sesi yang sudah ada tidak dipindahkan otomatis";
     }
     return { id: studentId!, message: id ? `Data siswa diperbarui${note}` : "Siswa ditambahkan" };
   });

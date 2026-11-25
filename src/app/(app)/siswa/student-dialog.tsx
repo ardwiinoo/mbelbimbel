@@ -23,7 +23,8 @@ function auditText(a: StudentRow["audit"]) {
 }
 
 type FormValues = Omit<StudentInput, "programs"> & {
-  programs: { program_id: string; tutor_id: string }[];
+  /** orig = program baris ini saat dialog dibuka ("" = baris baru); dikirim sebagai "dari" agar pasangan lama→baru jelas */
+  programs: { program_id: string; tutor_id: string; orig: string }[];
 };
 
 export function StudentDialog({
@@ -49,8 +50,8 @@ export function StudentDialog({
       ortu_nama: student?.ortu_nama ?? "",
       ortu_wa: student?.ortu_wa ?? "",
       status: student?.status ?? "aktif",
-      programs: student?.student_programs.map((p) => ({ program_id: p.program_id, tutor_id: p.tutor_id ?? "" })) ?? [
-        { program_id: "", tutor_id: "" },
+      programs: student?.student_programs.map((p) => ({ program_id: p.program_id, tutor_id: p.tutor_id ?? "", orig: p.program_id })) ?? [
+        { program_id: "", tutor_id: "", orig: "" },
       ],
     },
   });
@@ -58,23 +59,37 @@ export function StudentDialog({
 
   // Pemberitahuan sebelum simpan: mengganti program ikut memindahkan sesi yang belum ditagih (tarif ikut berubah)
   const watched = useWatch({ control, name: "programs" });
-  const nowIds = (watched ?? []).map((p) => p.program_id).filter(Boolean);
+  const rowsNow = watched ?? [];
+  const nowIds = rowsNow.map((p) => p.program_id).filter(Boolean);
   const origIds = student?.student_programs.map((p) => p.program_id) ?? [];
   const removedIds = student ? origIds.filter((x) => !nowIds.includes(x)) : [];
   const addedIds = student ? nowIds.filter((x) => !origIds.includes(x)) : [];
   const nameOf = (pid: string) => programs.find((p) => p.id === pid)?.nama ?? student?.student_programs.find((p) => p.program_id === pid)?.programs?.nama ?? "program";
+  const hargaOf = (pid: string) => {
+    const t = programs.find((p) => p.id === pid)?.tarif;
+    return t != null ? ` (${rupiah(t)} / pertemuan)` : "";
+  };
+  // pasangan lama → baru dari baris yang programnya diganti
+  const pairs = student
+    ? rowsNow.filter((p) => p.orig && p.program_id && p.orig !== p.program_id && !nowIds.includes(p.orig)).map((p) => ({ dari: p.orig, ke: p.program_id }))
+    : [];
+  const unpairedAdded = addedIds.filter((x) => !pairs.some((p) => p.ke === x));
+  const lines: string[] = pairs.map((p) => `${nameOf(p.dari)} → ${nameOf(p.ke)}${hargaOf(p.ke)}`);
+  if (unpairedAdded.length === 1 && removedIds.some((x) => !pairs.some((p) => p.dari === x))) {
+    lines.push(`program lama lainnya → ${nameOf(unpairedAdded[0])}${hargaOf(unpairedAdded[0])}`);
+  } else if (unpairedAdded.length === 1 && pairs.length === 0 && removedIds.length === 0) {
+    lines.length = 0; // hanya menambah program, tidak ada yang diganti
+  }
   let swapNotice: { tone: "info" | "warn"; text: string } | null = null;
-  if (removedIds.length === 1 && addedIds.length === 1) {
-    const to = programs.find((p) => p.id === addedIds[0]);
-    const harga = to?.tarif != null ? ` (${rupiah(to.tarif)} / pertemuan)` : "";
+  if (lines.length) {
     swapNotice = {
       tone: "info",
-      text: `Program diganti dari ${nameOf(removedIds[0])} ke ${nameOf(addedIds[0])}. Sesi yang belum ditagih ikut pindah ke ${nameOf(addedIds[0])}${harga}, jadi tagihannya memakai tarif baru. Sesi yang sudah masuk invoice tetap memakai data lama.`,
+      text: `Program diganti: ${lines.join("; ")}. Sesi yang belum ditagih ikut pindah ke program baru, jadi tagihannya memakai tarif baru. Sesi yang sudah masuk invoice tetap memakai data lama.`,
     };
   } else if (removedIds.length > 0 && addedIds.length > 0) {
     swapNotice = {
       tone: "warn",
-      text: "Beberapa program diubah sekaligus, jadi sesi yang sudah ada tidak dipindahkan otomatis dan tetap memakai program lamanya. Ganti satu program per simpan agar sesi yang belum ditagih ikut pindah.",
+      text: "Program dihapus lalu ditambah di baris lain, jadi pasangannya tidak jelas dan sesi yang sudah ada tidak dipindahkan otomatis. Ganti program langsung di barisnya (pilih ulang di dropdown yang sama) agar sesi yang belum ditagih ikut pindah.",
     };
   }
 
@@ -83,7 +98,7 @@ export function StudentDialog({
       const res = await saveStudent({
         ...v,
         id: student?.id,
-        programs: v.programs.filter((p) => p.program_id).map((p) => ({ program_id: p.program_id, tutor_id: p.tutor_id || null })),
+        programs: v.programs.filter((p) => p.program_id).map((p) => ({ program_id: p.program_id, tutor_id: p.tutor_id || null, dari: p.orig || null })),
       });
       if (res.ok) {
         toast.success(res.message);
@@ -137,7 +152,7 @@ export function StudentDialog({
             <div key={f.id} className="flex gap-2">
               <Controller control={control} name={`programs.${i}.program_id`} render={({ field }) => (
                 <AppSelect value={field.value} onChange={field.onChange} placeholder="Pilih program" aria-label="Program"
-                  options={programs.map((p) => ({ value: p.id, label: p.nama }))} />
+                  options={programs.filter((p) => p.id === field.value || !nowIds.includes(p.id)).map((p) => ({ value: p.id, label: p.nama }))} />
               )} />
               <Controller control={control} name={`programs.${i}.tutor_id`} render={({ field }) => (
                 <AppSelect value={field.value} onChange={field.onChange} placeholder="Pilih tentor" aria-label="Tentor"
@@ -148,7 +163,7 @@ export function StudentDialog({
               </Button>
             </div>
           ))}
-          <Button type="button" variant="outline" size="sm" onClick={() => append({ program_id: "", tutor_id: "" })}>
+          <Button type="button" variant="outline" size="sm" onClick={() => append({ program_id: "", tutor_id: "", orig: "" })}>
             <Plus /> Tambah program
           </Button>
           {swapNotice && (

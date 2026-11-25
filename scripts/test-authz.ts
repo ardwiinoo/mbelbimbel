@@ -729,6 +729,17 @@ async function main() {
     check("ganti program siswa: sesi sisa program lama yang belum ditagih ikut pindah", sOrphAfter.programId === progB.id);
     check("ganti program siswa: sesi yang sudah masuk invoice tidak berubah", sBilledAfter.programId === progA.id);
     check("ganti program siswa: tercatat di audit log", (await db().select().from(auditLog).where(and(eq(auditLog.target, stuRow.id), eq(auditLog.aksi, "pindah_program_sesi")))).length >= 1);
+    // dua program diganti sekaligus (dengan pasangan dari baris form): masing-masing sesi ikut ke pasangannya
+    const progD = progs2.find((p) => ![progA.id, progB.id, progC.id].includes(p.id) && p.aktif);
+    if (progD) {
+      await stu.saveStudent(admin, { ...stuBase, programs: [{ program_id: progB.id, tutor_id: aulia.id }, { program_id: progC.id, tutor_id: aulia.id }] });
+      await db().update(sessions).set({ programId: progB.id }).where(eq(sessions.id, sFree.id));
+      await db().update(sessions).set({ programId: progC.id }).where(eq(sessions.id, sOrph.id));
+      const two = await stu.saveStudent(admin, { ...stuBase, programs: [{ program_id: progA.id, tutor_id: aulia.id, dari: progB.id }, { program_id: progD.id, tutor_id: aulia.id, dari: progC.id }] });
+      const [f2] = await db().select().from(sessions).where(eq(sessions.id, sFree.id));
+      const [o2] = await db().select().from(sessions).where(eq(sessions.id, sOrph.id));
+      check("ganti 2 program sekaligus: tiap sesi ikut ke pasangannya", f2.programId === progA.id && o2.programId === progD.id && /dipindah/.test(two.message), two.message);
+    }
     // kembalikan data uji
     await stu.saveStudent(admin, { ...stuBase, programs: [...progsKeep, { program_id: progA.id, tutor_id: aulia.id }] });
     await db().delete(sessions).where(inArray(sessions.id, [sFree.id, sOrph.id]));
