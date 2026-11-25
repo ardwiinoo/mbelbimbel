@@ -198,6 +198,52 @@ export async function setPaid(actor: Actor | null, id: string, lunas: boolean, t
   });
 }
 
+/**
+ * Hapus invoice yang belum lunas (mis. salah terbit / tidak jadi): sesinya kembali ke "Siap Tagih" dan bisa
+ * diterbitkan ulang dengan tarif terbaru. Nota PDF dibuat saat dibuka dan tidak disimpan di server, jadi tidak ada
+ * berkas yang tertinggal. Invoice lunas harus dibatalkan lunasnya dulu. Tercatat di audit log (siapa, nomor, nilai).
+ * Bila invoice ini bernomor urut terakhir bulannya, nomor dipakai lagi oleh invoice berikutnya (tanpa lubang).
+ */
+export async function deleteInvoice(actor: Actor | null, id: string) {
+  assertCan(actor, "invoice", "write");
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new UserError("Invoice tidak ditemukan");
+  return db().transaction(async (tx) => {
+    const [inv] = await tx
+      .select({ i: invoices, siswa: students.nama })
+      .from(invoices)
+      .innerJoin(students, eq(students.id, invoices.studentId))
+      .where(eq(invoices.id, id))
+      .for("update", { of: invoices });
+    if (!inv) throw new UserError("Invoice tidak ditemukan");
+    if (inv.i.statusBayar === "lunas") throw new UserError("Invoice sudah lunas. Batalkan status lunas dulu bila ingin menghapusnya.");
+
+    const items = await tx.select({ sessionId: invoiceItems.sessionId }).from(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+    const sesiIds = items.map((x) => x.sessionId);
+    if (sesiIds.length) {
+      await tx
+        .update(sessions)
+        .set({ statusTagihan: "belum_rekap", invoiceId: null, updatedAt: new Date(), updatedBy: actor.id })
+        .where(inArray(sessions.id, sesiIds));
+    }
+    await tx.delete(invoices).where(eq(invoices.id, id)); // invoice_items ikut terhapus (cascade)
+
+    const m = /^INV\/(\d{4})\/(\d{2})\/(\d+)$/.exec(inv.i.nomor);
+    if (m) {
+      await tx
+        .update(invoiceCounters)
+        .set({ lastNumber: sql`${invoiceCounters.lastNumber} - 1` })
+        .where(and(eq(invoiceCounters.periode, `${m[1]}-${m[2]}`), eq(invoiceCounters.lastNumber, Number(m[3]))));
+    }
+    await tx.insert(auditLog).values({
+      actorId: actor.id,
+      aksi: "invoice_hapus",
+      target: id,
+      detail: { nomor: inv.i.nomor, siswa: inv.siswa, sesi: sesiIds.length, total: inv.i.total },
+    });
+    return `Invoice ${inv.i.nomor} dihapus. Sesinya kembali ke Daftar Siap Tagih.`;
+  });
+}
+
 /** Data nota PDF dari snapshot (tarif di invoice_items, bukan tarif master saat ini). */
 export async function getInvoicePdfData(actor: Actor | null, id: string) {
   assertCan(actor, "invoice", "read");
