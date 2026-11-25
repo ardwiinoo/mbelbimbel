@@ -1,12 +1,12 @@
 "use client";
 import { useTransition } from "react";
-import { Controller, useForm, useFieldArray } from "react-hook-form";
+import { Controller, useForm, useFieldArray, useWatch } from "react-hook-form";
 import { toast } from "sonner";
-import { Plus, X } from "lucide-react";
+import { Info, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { tanggal, tanggalJam } from "@/lib/format";
+import { rupiah, tanggal, tanggalJam } from "@/lib/format";
 import { FormDialog, Field } from "@/components/app/form-dialog";
 import { saveStudent, type StudentInput } from "./actions";
 import type { StudentRow } from "./students-view";
@@ -33,7 +33,7 @@ export function StudentDialog({
   onClose,
 }: {
   student: StudentRow | null;
-  programs: (Opt & { kategori: string })[];
+  programs: (Opt & { kategori: string; tarif: number | null })[];
   tutors: Opt[];
   onClose: () => void;
 }) {
@@ -55,6 +55,28 @@ export function StudentDialog({
     },
   });
   const { fields, append, remove } = useFieldArray({ control, name: "programs" });
+
+  // Pemberitahuan sebelum simpan: mengganti program ikut memindahkan sesi yang belum ditagih (tarif ikut berubah)
+  const watched = useWatch({ control, name: "programs" });
+  const nowIds = (watched ?? []).map((p) => p.program_id).filter(Boolean);
+  const origIds = student?.student_programs.map((p) => p.program_id) ?? [];
+  const removedIds = student ? origIds.filter((x) => !nowIds.includes(x)) : [];
+  const addedIds = student ? nowIds.filter((x) => !origIds.includes(x)) : [];
+  const nameOf = (pid: string) => programs.find((p) => p.id === pid)?.nama ?? student?.student_programs.find((p) => p.program_id === pid)?.programs?.nama ?? "program";
+  let swapNotice: { tone: "info" | "warn"; text: string } | null = null;
+  if (removedIds.length === 1 && addedIds.length === 1) {
+    const to = programs.find((p) => p.id === addedIds[0]);
+    const harga = to?.tarif != null ? ` (${rupiah(to.tarif)} / pertemuan)` : "";
+    swapNotice = {
+      tone: "info",
+      text: `Program diganti dari ${nameOf(removedIds[0])} ke ${nameOf(addedIds[0])}. Sesi yang belum ditagih ikut pindah ke ${nameOf(addedIds[0])}${harga}, jadi tagihannya memakai tarif baru. Sesi yang sudah masuk invoice tetap memakai data lama.`,
+    };
+  } else if (removedIds.length > 0 && addedIds.length > 0) {
+    swapNotice = {
+      tone: "warn",
+      text: "Beberapa program diubah sekaligus, jadi sesi yang sudah ada tidak dipindahkan otomatis dan tetap memakai program lamanya. Ganti satu program per simpan agar sesi yang belum ditagih ikut pindah.",
+    };
+  }
 
   const onSubmit = (v: FormValues) =>
     start(async () => {
@@ -129,6 +151,15 @@ export function StudentDialog({
           <Button type="button" variant="outline" size="sm" onClick={() => append({ program_id: "", tutor_id: "" })}>
             <Plus /> Tambah program
           </Button>
+          {swapNotice && (
+            <p
+              role="status"
+              className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${swapNotice.tone === "info" ? "border-blue-200 bg-blue-50 text-blue-900" : "border-amber-300 bg-amber-50 text-amber-900"}`}
+            >
+              <Info className="mt-0.5 size-3.5 shrink-0" />
+              {swapNotice.text}
+            </p>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 sm:col-span-2">

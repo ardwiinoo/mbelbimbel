@@ -34,7 +34,7 @@ export function StudentsView({
 }: {
   perm: StudentPerm;
   students: StudentRow[];
-  programs: (Opt & { kategori: string })[];
+  programs: (Opt & { kategori: string; tarif: number | null })[];
   tutors: Opt[];
 }) {
   const [fProgram, setFProgram] = useState("");

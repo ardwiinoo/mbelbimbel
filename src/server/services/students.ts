@@ -196,7 +196,7 @@ export async function saveStudent(actor: Actor | null, input: StudentInput) {
     }
 
     // Program diganti (satu keluar, satu masuk): sesi yang BELUM direkap/ditagih ikut pindah ke program baru, sehingga
-    // tagihannya memakai tarif program baru. Sesi yang sudah masuk invoice (data lama) atau sudah terkunci honor tidak disentuh.
+    // tagihannya memakai tarif program baru. Sesi yang sudah masuk invoice (data lama) tidak disentuh. Honor yang sudah lunas tetap utuh karena tarifnya sudah di-snapshot per sesi.
     let note = "";
     if (removed.length === 1 && added.length === 1) {
       const moved = await tx
@@ -205,10 +205,9 @@ export async function saveStudent(actor: Actor | null, input: StudentInput) {
         .where(
           and(
             eq(sessions.studentId, studentId!),
-            eq(sessions.programId, removed[0]),
+            notInArray(sessions.programId, keep), // program yang sudah tidak diikuti (yang dilepas maupun sisa sesi lama)
             eq(sessions.statusTagihan, "belum_rekap"),
             isNull(sessions.invoiceId),
-            isNull(sessions.honorSlipId),
           ),
         )
         .returning({ id: sessions.id });

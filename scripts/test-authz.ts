@@ -3,7 +3,7 @@
 // Bagian HTTP ikut dijalankan bila BASE_URL di-set (mis. BASE_URL=http://localhost:3000).
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { and, count, eq, sql } from "drizzle-orm";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { closeDb, db } from "../src/db";
 import { appSettings, auditLog, files, honorSlips, invoices, mapelCategories, materials, sessions, studentAssessments, studentPrograms, students, users } from "../src/db/schema";
 import { getFile, saveFile } from "../src/lib/storage";
@@ -716,15 +716,22 @@ async function main() {
     const spStu = (await db().select().from(studentPrograms).where(eq(studentPrograms.studentId, stuRow.id))).map((x) => ({ program_id: x.programId, tutor_id: x.tutorId }));
     const stuBase = { id: stuRow.id, nama: stuRow.nama, status: stuRow.status } as const;
     const progsKeep = spStu.filter((x) => x.program_id !== progA.id).map((x) => ({ program_id: x.program_id, tutor_id: x.tutor_id }));
+    // sesi sisa dari program lain yang sudah tidak diikuti (belum ditagih) juga ikut pindah
+    const progC = progs2.find((p) => p.id !== progA.id && p.id !== progB.id && p.aktif)!;
+    await ses.createSessions(admin, { student_program_id: spAulia.id, tutor_id: aulia.id, tanggal: "2019-05-27", jam_mulai: "09:00", jam_selesai: "10:00", ulang_minggu: 1 });
+    const [sOrph] = await db().select().from(sessions).where(and(eq(sessions.tutorId, aulia.id), eq(sessions.mulaiAt, new Date("2019-05-27T09:00:00+07:00"))));
+    await db().update(sessions).set({ programId: progC.id }).where(eq(sessions.id, sOrph.id));
     const swap = await stu.saveStudent(admin, { ...stuBase, programs: [...progsKeep, { program_id: progB.id, tutor_id: aulia.id }] });
     const [sFreeAfter] = await db().select().from(sessions).where(eq(sessions.id, sFree.id));
     const [sBilledAfter] = await db().select().from(sessions).where(eq(sessions.id, sTagih.id));
     check("ganti program siswa: sesi belum ditagih pindah ke program baru", sFreeAfter.programId === progB.id && /dipindah/.test(swap.message), swap.message);
+    const [sOrphAfter] = await db().select().from(sessions).where(eq(sessions.id, sOrph.id));
+    check("ganti program siswa: sesi sisa program lama yang belum ditagih ikut pindah", sOrphAfter.programId === progB.id);
     check("ganti program siswa: sesi yang sudah masuk invoice tidak berubah", sBilledAfter.programId === progA.id);
     check("ganti program siswa: tercatat di audit log", (await db().select().from(auditLog).where(and(eq(auditLog.target, stuRow.id), eq(auditLog.aksi, "pindah_program_sesi")))).length >= 1);
     // kembalikan data uji
     await stu.saveStudent(admin, { ...stuBase, programs: [...progsKeep, { program_id: progA.id, tutor_id: aulia.id }] });
-    await db().delete(sessions).where(eq(sessions.id, sFree.id));
+    await db().delete(sessions).where(inArray(sessions.id, [sFree.id, sOrph.id]));
 
     // --- honor: tarif, tunjangan, lunas oleh admin berbeda ---
     await master.saveTutor(admin, { ...tutorBase, tarif_honor: 36000 });
