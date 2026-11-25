@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { and, count, eq, sql } from "drizzle-orm";
 import { closeDb, db } from "../src/db";
-import { appSettings, auditLog, files, honorSlips, invoices, mapelCategories, materials, sessions, studentAssessments, students, users } from "../src/db/schema";
+import { appSettings, auditLog, files, honorSlips, invoices, mapelCategories, materials, sessions, studentAssessments, studentPrograms, students, users } from "../src/db/schema";
 import { getFile, saveFile } from "../src/lib/storage";
 import { conflictKinds, findAllConflicts, layoutLanes, type Slot } from "../src/lib/session-conflicts";
 import { loadPermissions, type Actor } from "../src/server/authz";
@@ -169,6 +169,21 @@ async function main() {
     check("paging laporan di DB (pageSize)", pg.rows.length === 1 && pg.total >= 2);
     check("pencarian aman dari wildcard %", (await rep.listReports(admin, { q: "%" })).total === 0);
 
+    // ---- hapus laporan: pemilik atau Kelola Laporan; file ikut terhapus ----
+    await rep.uploadReport(aulia, { studentId: sp.student_id, programId: sp.program_id, periode: "Uji Hapus A", file: file(PDF, "hapus-a.pdf") });
+    await rep.uploadReport(aulia, { studentId: sp.student_id, programId: sp.program_id, periode: "Uji Hapus B", file: file(PDF, "hapus-b.pdf") });
+    const repA = (await rep.listReports(aulia)).rows.find((r) => r.periode === "Uji Hapus A")!;
+    const repB = (await rep.listReports(aulia)).rows.find((r) => r.periode === "Uji Hapus B")!;
+    const keyA = await keyOf(repA.file_id);
+    const keyB = await keyOf(repB.file_id);
+    await rejects("hapus laporan: tentor lain ditolak", () => rep.deleteReport(rina, repA.id), /tidak ditemukan/);
+    await rep.deleteReport(aulia, repA.id);
+    check("hapus laporan oleh pemilik: baris hilang & file terhapus (DB + disk)", (await rep.listReports(admin, { q: "Uji Hapus A" })).total === 0 && (await fileGone(repA.file_id, keyA)));
+    await rep.deleteReport(admin, repB.id);
+    check("hapus laporan oleh admin (Kelola Laporan): file terhapus", (await rep.listReports(admin, { q: "Uji Hapus B" })).total === 0 && (await fileGone(repB.file_id, keyB)));
+    check("hapus laporan tercatat di audit log", (await db().select().from(auditLog).where(and(eq(auditLog.target, repB.id), eq(auditLog.aksi, "hapus_laporan")))).some((a) => a.actorId === admin.id));
+    await rejects("hapus laporan yang sudah tidak ada", () => rep.deleteReport(admin, repB.id), /tidak ditemukan/);
+
     check("tentor bisa membaca file bank materi", (await findReadableFile(aulia, mat0.fileId)) !== null);
 
     const oldMatKey = await keyOf(mat0.fileId);
@@ -183,10 +198,15 @@ async function main() {
     check("ganti asesmen → hanya 1 dokumen aktif, file lama terhapus", asmNow.length === 1 && (await fileGone(asm.fileId, oldAsmKey)));
     asm.fileId = asmNow[0].fileId;
     await rejects("tentor tidak bisa upload materi", () => mat.saveMaterial(aulia, { judul: "x", kategori: "x", jenjang: "x", file: file(PDF, "x.pdf") }), /tidak punya akses/);
-    await mat.softDeleteMaterial(admin, mat0.id);
-    check("materi yang dihapus tidak bisa dibaca tentor", (await findReadableFile(aulia, mat0.fileId)) === null);
-    check("…tapi tetap bisa dibaca admin", (await findReadableFile(admin, mat0.fileId)) !== null);
-    await db().update(materials).set({ deletedAt: null }).where(eq(materials.id, mat0.id));
+    // hapus materi = baris + file hilang (DB & disk); hanya akses Kelola Materi
+    await mat.saveMaterial(admin, { judul: "Materi Uji Hapus", kategori: "Uji", jenjang: "Uji", file: file(PDF, "hapus.pdf") });
+    const [matDel] = await db().select().from(materials).where(eq(materials.judul, "Materi Uji Hapus"));
+    const matDelKey = await keyOf(matDel.fileId);
+    await rejects("tentor tidak bisa menghapus materi", () => mat.deleteMaterial(aulia, matDel.id), /tidak punya akses/);
+    await mat.deleteMaterial(admin, matDel.id);
+    check("hapus materi: baris hilang & file terhapus dari DB + disk", (await db().select().from(materials).where(eq(materials.id, matDel.id))).length === 0 && (await fileGone(matDel.fileId, matDelKey)));
+    check("hapus materi tercatat di audit log", (await db().select().from(auditLog).where(and(eq(auditLog.target, matDel.id), eq(auditLog.aksi, "hapus_materi")))).some((a) => a.actorId === admin.id));
+    await rejects("hapus materi yang sudah tidak ada", () => mat.deleteMaterial(admin, matDel.id), /tidak ditemukan/);
 
     await rejects("storage menolak path traversal (getFile)", () => getFile("../../etc/passwd"), /tidak valid/);
     await rejects("storage menolak key absolut", () => getFile("/etc/passwd"), /tidak valid/);
@@ -685,6 +705,26 @@ async function main() {
     await inv.deleteInvoice(admin, ulang.id);
     await rejects("hapus invoice: id tidak ada", () => inv.deleteInvoice(admin, ulang.id), /tidak ditemukan/);
     await db().delete(sessions).where(eq(sessions.id, sHapus.id)); // bersihkan sesi uji agar blok honor tak terpengaruh
+
+    // --- ganti program siswa: sesi belum ditagih ikut pindah, yang sudah masuk invoice tetap ---
+    const progs2 = await master.listProgramsWithTarif(admin);
+    const progA = progs2.find((p) => p.id === sTagih.programId)!;
+    const progB = progs2.find((p) => p.id !== progA.id && p.aktif)!;
+    const [stuRow] = await db().select().from(students).where(eq(students.id, sTagih.studentId));
+    await ses.createSessions(admin, { student_program_id: spAulia.id, tutor_id: aulia.id, tanggal: "2019-05-20", jam_mulai: "09:00", jam_selesai: "10:00", ulang_minggu: 1 });
+    const [sFree] = await db().select().from(sessions).where(and(eq(sessions.tutorId, aulia.id), eq(sessions.mulaiAt, new Date("2019-05-20T09:00:00+07:00"))));
+    const spStu = (await db().select().from(studentPrograms).where(eq(studentPrograms.studentId, stuRow.id))).map((x) => ({ program_id: x.programId, tutor_id: x.tutorId }));
+    const stuBase = { id: stuRow.id, nama: stuRow.nama, status: stuRow.status } as const;
+    const progsKeep = spStu.filter((x) => x.program_id !== progA.id).map((x) => ({ program_id: x.program_id, tutor_id: x.tutor_id }));
+    const swap = await stu.saveStudent(admin, { ...stuBase, programs: [...progsKeep, { program_id: progB.id, tutor_id: aulia.id }] });
+    const [sFreeAfter] = await db().select().from(sessions).where(eq(sessions.id, sFree.id));
+    const [sBilledAfter] = await db().select().from(sessions).where(eq(sessions.id, sTagih.id));
+    check("ganti program siswa: sesi belum ditagih pindah ke program baru", sFreeAfter.programId === progB.id && /dipindah/.test(swap.message), swap.message);
+    check("ganti program siswa: sesi yang sudah masuk invoice tidak berubah", sBilledAfter.programId === progA.id);
+    check("ganti program siswa: tercatat di audit log", (await db().select().from(auditLog).where(and(eq(auditLog.target, stuRow.id), eq(auditLog.aksi, "pindah_program_sesi")))).length >= 1);
+    // kembalikan data uji
+    await stu.saveStudent(admin, { ...stuBase, programs: [...progsKeep, { program_id: progA.id, tutor_id: aulia.id }] });
+    await db().delete(sessions).where(eq(sessions.id, sFree.id));
 
     // --- honor: tarif, tunjangan, lunas oleh admin berbeda ---
     await master.saveTutor(admin, { ...tutorBase, tarif_honor: 36000 });

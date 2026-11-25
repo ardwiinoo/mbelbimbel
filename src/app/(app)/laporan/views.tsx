@@ -1,15 +1,18 @@
 "use client";
-import { useRef, useState } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Upload, FileText, ChevronDown, Loader2, Pencil } from "lucide-react";
+import { Upload, FileText, ChevronDown, Loader2, Pencil, Trash2, Eye, Download, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataTable, Td, EmptyState, Pill } from "@/components/app/ui";
-import { FileLinks, fileHref } from "@/components/app/file-link";
+import { fileHref } from "@/components/app/file-link";
+import { ActionMenu, type ActionItem } from "@/components/app/action-menu";
+import { confirmDialog } from "@/components/app/confirm";
 import { FormDialog, Field } from "@/components/app/form-dialog";
-import { ShareWaButton } from "@/components/app/share-wa";
+import { shareFileViaWa } from "@/components/app/share-wa";
 import { Pager, SearchBox, ServerPager, ServerSearch, Toolbar, useClientList } from "@/components/app/table-kit";
+import { deleteReport } from "./actions";
 import { postForm } from "@/lib/post-form";
 import { tanggal, tanggalJam } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -19,6 +22,37 @@ export type { AssignmentRow, ReportRow };
 
 function shareText(r: ReportRow) {
   return `Assalamu'alaikum ${r.students?.ortu_nama ?? "Bapak/Ibu"}, berikut laporan perkembangan belajar ${r.students?.nama}${r.periode ? ` periode ${r.periode}` : ""}. Terima kasih.`;
+}
+
+/** Aksi satu laporan di menu titik tiga: lihat, unduh, kirim WA, edit, hapus (edit/hapus hanya bila boleh). */
+function useReportActions(onEdit: (r: ReportRow) => void) {
+  const [pending, start] = useTransition();
+  function remove(r: ReportRow) {
+    start(async () => {
+      const ok = await confirmDialog({
+        title: `Hapus laporan ${r.students?.nama ?? ""}${r.periode ? ` (${r.periode})` : ""}?`,
+        desc: "Laporan dan file PDF-nya dihapus permanen dari server. Tindakan ini tidak bisa dibatalkan.",
+        confirmLabel: "Hapus",
+        tone: "danger",
+      });
+      if (!ok) return;
+      const res = await deleteReport(r.id);
+      if (res.ok) toast.success(res.message);
+      else toast.error(res.error);
+    });
+  }
+  const items = (r: ReportRow, canChange: boolean): ActionItem[] => [
+    { label: "Lihat PDF", icon: <Eye />, href: fileHref(r.file_id), newTab: true },
+    { label: "Unduh PDF", icon: <Download />, href: fileHref(r.file_id, true) },
+    {
+      label: "Kirim WA",
+      icon: <MessageCircle />,
+      onClick: () => void shareFileViaWa({ fileUrl: fileHref(r.file_id), fileName: r.file_name || "laporan.pdf", phone: r.students?.ortu_wa ?? null, text: shareText(r) }),
+    },
+    { label: "Edit", icon: <Pencil />, hidden: !canChange, separator: true, onClick: () => onEdit(r) },
+    { label: "Hapus laporan", icon: <Trash2 />, danger: true, hidden: !canChange, disabled: pending, onClick: () => remove(r) },
+  ];
+  return items;
 }
 
 /** "Diedit oleh X • 21 Nov 2026 (10.15)" */
@@ -46,6 +80,7 @@ export function AdminReports({
   canEditAll: boolean;
 }) {
   const [editing, setEditing] = useState<ReportRow | null>(null);
+  const items = useReportActions(setEditing);
   return (
     <div className="space-y-4">
       <Toolbar>
@@ -54,7 +89,7 @@ export function AdminReports({
       {!reports.length ? (
         <EmptyState title="Tidak ada laporan" desc="Belum ada laporan masuk, atau tidak cocok dengan pencarian." />
       ) : (
-        <DataTable head={["Tanggal Upload", "Siswa & Kelas", "Program", "Tentor", "Periode", "File Laporan"]}>
+        <DataTable head={["Tanggal Upload", "Siswa & Kelas", "Program", "Tentor", "Periode", "Aksi"]}>
           {reports.map((r) => (
             <tr key={r.id}>
               <Td className="whitespace-nowrap">
@@ -72,15 +107,7 @@ export function AdminReports({
                 <EditedNote r={r} />
               </Td>
               <Td>
-                <div className="flex flex-wrap gap-1.5">
-                  <FileLinks fileId={r.file_id} />
-                  <ShareWaButton fileUrl={fileHref(r.file_id)} fileName={r.file_name || "laporan.pdf"} phone={r.students?.ortu_wa ?? null} text={shareText(r)} label="WA" />
-                  {(canEditAll || r.tutor_id === meId) && (
-                    <Button size="sm" variant="ghost" onClick={() => setEditing(r)}>
-                      <Pencil /> Edit
-                    </Button>
-                  )}
-                </div>
+                <ActionMenu items={items(r, canEditAll || r.tutor_id === meId)} />
               </Td>
             </tr>
           ))}
@@ -95,6 +122,7 @@ export function AdminReports({
 export function TutorReports({ assignments, reports }: { assignments: AssignmentRow[]; reports: ReportRow[] }) {
   const [uploading, setUploading] = useState<AssignmentRow | null>(null);
   const [editing, setEditing] = useState<ReportRow | null>(null);
+  const items = useReportActions(setEditing);
   const [open, setOpen] = useState<string | null>(null);
   const active = assignments.filter((a) => a.students && a.students.status === "aktif");
   const list = useClientList(active, (a) => `${a.students?.nama} ${a.students?.kelas} ${a.programs?.nama}`, 10);
@@ -147,13 +175,7 @@ export function TutorReports({ assignments, reports }: { assignments: Assignment
                           <EditedNote r={r} />
                         </div>
                       </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        <FileLinks fileId={r.file_id} />
-                        <ShareWaButton fileUrl={fileHref(r.file_id)} fileName={r.file_name || "laporan.pdf"} phone={a.students?.ortu_wa ?? null} text={shareText(r)} label="WA" />
-                        <Button size="sm" variant="ghost" onClick={() => setEditing(r)}>
-                          <Pencil /> Edit
-                        </Button>
-                      </div>
+                      <ActionMenu items={items({ ...r, students: r.students ? { ...r.students, ortu_wa: a.students?.ortu_wa ?? r.students.ortu_wa } : r.students }, true)} />
                     </div>
                   ))}
                 </div>

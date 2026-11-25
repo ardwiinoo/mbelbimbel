@@ -1,7 +1,8 @@
 import { and, asc, eq, exists, inArray, isNull, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, files, programs, studentAssessments, studentPrograms, students, users } from "@/db/schema";
+import { auditLog, files, programs, sessions, studentAssessments, studentPrograms, students, users } from "@/db/schema";
+import { rupiah } from "@/lib/format";
 import { can } from "@/lib/access";
 import { assertCan, scopeOf, UserError, type Actor } from "../authz";
 import { detachFileRow, purgeStoredFiles, withUploadedFile } from "../files";
@@ -178,6 +179,9 @@ export async function saveStudent(actor: Actor | null, input: StudentInput) {
     }
     // sinkronkan program + tentor pengampu
     const keep = progs.map((p) => p.program_id);
+    const before = id ? (await tx.select({ p: studentPrograms.programId }).from(studentPrograms).where(eq(studentPrograms.studentId, studentId!))).map((x) => x.p) : [];
+    const removed = before.filter((p) => !keep.includes(p));
+    const added = keep.filter((p) => !before.includes(p));
     await tx
       .delete(studentPrograms)
       .where(and(eq(studentPrograms.studentId, studentId!), keep.length ? notInArray(studentPrograms.programId, keep) : undefined));
@@ -190,7 +194,39 @@ export async function saveStudent(actor: Actor | null, input: StudentInput) {
           set: { tutorId: p.tutor_id, updatedAt: new Date(), updatedBy: actor.id },
         });
     }
-    return { id: studentId!, message: id ? "Data siswa diperbarui" : "Siswa ditambahkan" };
+
+    // Program diganti (satu keluar, satu masuk): sesi yang BELUM direkap/ditagih ikut pindah ke program baru, sehingga
+    // tagihannya memakai tarif program baru. Sesi yang sudah masuk invoice (data lama) atau sudah terkunci honor tidak disentuh.
+    let note = "";
+    if (removed.length === 1 && added.length === 1) {
+      const moved = await tx
+        .update(sessions)
+        .set({ programId: added[0], updatedAt: new Date(), updatedBy: actor.id })
+        .where(
+          and(
+            eq(sessions.studentId, studentId!),
+            eq(sessions.programId, removed[0]),
+            eq(sessions.statusTagihan, "belum_rekap"),
+            isNull(sessions.invoiceId),
+            isNull(sessions.honorSlipId),
+          ),
+        )
+        .returning({ id: sessions.id });
+      if (moved.length) {
+        const [np] = await tx.select({ nama: programs.nama, tarif: programs.tarifPerPertemuan }).from(programs).where(eq(programs.id, added[0]));
+        const [op] = await tx.select({ nama: programs.nama }).from(programs).where(eq(programs.id, removed[0]));
+        await tx.insert(auditLog).values({
+          actorId: actor.id,
+          aksi: "pindah_program_sesi",
+          target: studentId!,
+          detail: { dari: op?.nama, ke: np?.nama, sesi: moved.length },
+        });
+        note = `. ${moved.length} sesi yang belum ditagih dipindah ke ${np?.nama} (${rupiah(np?.tarif ?? 0)} / pertemuan)`;
+      }
+    } else if (removed.length > 0 && added.length > 0) {
+      note = ". Beberapa program berubah sekaligus, sesi yang sudah ada tidak dipindahkan otomatis";
+    }
+    return { id: studentId!, message: id ? `Data siswa diperbarui${note}` : "Siswa ditambahkan" };
   });
 }
 
