@@ -18,7 +18,7 @@ export type SessionRow = {
   mulai_at: string;
   selesai_at: string;
   status_kehadiran: Kehadiran;
-  status_tagihan: "belum_rekap" | "terekap";
+  status_tagihan: "belum_rekap" | "terekap" | "dibebaskan";
   absen_at: string | null;
   foto_file_id: string | null;
   lat: number | null;

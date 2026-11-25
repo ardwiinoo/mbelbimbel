@@ -36,6 +36,8 @@ export const NAV: NavItem[] = [
   { href: "/honor", label: "Honor Tentor", icon: "wallet", visible: (s) => can(s, "honor") },
   { href: "/pengguna", label: "Pengguna & Akses", icon: "shield", visible: (s) => can(s, "pengguna") },
   { href: "/pengaturan", label: "Pengaturan", icon: "settings", visible: (s) => can(s, "pengaturan") },
+  // Khusus Super Admin: pulihkan siswa yang dihapus
+  { href: "/terhapus", label: "Data Terhapus", icon: "archive", visible: (s) => s.isSuperuser },
 ];
 
 /** Urutan prioritas menu di bottom-nav HP (4 slot + "Lainnya"). */

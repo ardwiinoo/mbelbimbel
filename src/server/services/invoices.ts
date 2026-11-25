@@ -3,7 +3,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import type { AuditItem } from "@/lib/audit-label";
 import { auditLog, invoiceCounters, invoiceItems, invoices, programs, sessions, students, users } from "@/db/schema";
-import { assertCan, UserError, type Actor } from "../authz";
+import { assertCan, assertSuperuser, UserError, type Actor } from "../authz";
 import { loadBranding } from "../pdf-branding";
 import { likePattern } from "./reports";
 
@@ -241,6 +241,28 @@ export async function deleteInvoice(actor: Actor | null, id: string) {
       detail: { nomor: inv.i.nomor, siswa: inv.siswa, sesi: sesiIds.length, total: inv.i.total },
     });
     return `Invoice ${inv.i.nomor} dihapus. Sesinya kembali ke Daftar Siap Tagih.`;
+  });
+}
+
+/**
+ * Batalkan pembebasan tagihan satu sesi (cadangan bila admin salah membebaskan): sesi kembali ke Daftar Siap Tagih.
+ * Hanya Super Admin. Ditolak bila siswanya sudah dihapus (pulihkan siswa dulu) agar tagihan tidak menggantung.
+ */
+export async function undoWaiveSession(actor: Actor | null, sessionId: string) {
+  assertSuperuser(actor);
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) throw new UserError("Sesi tidak ditemukan");
+  return db().transaction(async (tx) => {
+    const [row] = await tx
+      .select({ s: sessions, siswa: students.nama, hapus: students.deletedAt })
+      .from(sessions)
+      .innerJoin(students, eq(students.id, sessions.studentId))
+      .where(eq(sessions.id, sessionId))
+      .for("update", { of: sessions });
+    if (!row || row.s.statusKehadiran !== "hadir" || row.s.statusTagihan !== "dibebaskan") throw new UserError("Sesi ini tidak berstatus tagihan dibebaskan");
+    if (row.hapus) throw new UserError(`${row.siswa} sudah dihapus. Pulihkan siswanya dulu sebelum membatalkan pembebasan.`);
+    await tx.update(sessions).set({ statusTagihan: "belum_rekap", updatedAt: new Date(), updatedBy: actor.id }).where(eq(sessions.id, sessionId));
+    await tx.insert(auditLog).values({ actorId: actor.id, aksi: "batal_bebaskan_tagihan", target: sessionId, detail: { siswa: row.siswa, mulai: row.s.mulaiAt.toISOString() } });
+    return "Pembebasan dibatalkan. Sesi kembali ke Daftar Siap Tagih.";
   });
 }
 

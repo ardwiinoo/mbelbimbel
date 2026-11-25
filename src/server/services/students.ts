@@ -1,10 +1,10 @@
-import { and, asc, eq, exists, inArray, isNull, notInArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, exists, gt, inArray, isNotNull, isNull, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, files, programs, sessions, studentAssessments, studentPrograms, students, users } from "@/db/schema";
+import { auditLog, files, invoices, programs, sessions, studentAssessments, studentPrograms, students, users } from "@/db/schema";
 import { rupiah } from "@/lib/format";
 import { can } from "@/lib/access";
-import { assertCan, scopeOf, UserError, type Actor } from "../authz";
+import { assertCan, assertSuperuser, scopeOf, UserError, type Actor } from "../authz";
 import { detachFileRow, purgeStoredFiles, withUploadedFile } from "../files";
 import { alias } from "drizzle-orm/pg-core";
 
@@ -244,16 +244,176 @@ export async function saveStudent(actor: Actor | null, input: StudentInput) {
   });
 }
 
+export type StudentDeleteSummary = {
+  nama: string;
+  /** Sesi Hadir yang belum masuk invoice (belum ditagih dan belum dibebaskan) */
+  hadir_belum_ditagih: number;
+  invoice_belum_lunas: number;
+  /** Sesi yang masih terjadwal; akan dibatalkan saat siswa dihapus */
+  sesi_terjadwal: number;
+};
+
+type Q = Pick<typeof import("@/db").db extends () => infer D ? D : never, "select">;
+async function deleteSummary(q: Q, studentId: string): Promise<StudentDeleteSummary | null> {
+  const [st] = await q.select({ nama: students.nama }).from(students).where(and(eq(students.id, studentId), isNull(students.deletedAt)));
+  if (!st) return null;
+  const [hadir] = await q
+    .select({ n: count() })
+    .from(sessions)
+    .where(and(eq(sessions.studentId, studentId), eq(sessions.statusKehadiran, "hadir"), eq(sessions.statusTagihan, "belum_rekap"), isNull(sessions.invoiceId)));
+  const [inv] = await q.select({ n: count() }).from(invoices).where(and(eq(invoices.studentId, studentId), eq(invoices.statusBayar, "belum_lunas")));
+  const [jad] = await q.select({ n: count() }).from(sessions).where(and(eq(sessions.studentId, studentId), eq(sessions.statusKehadiran, "terjadwal")));
+  return { nama: st.nama, hadir_belum_ditagih: hadir.n, invoice_belum_lunas: inv.n, sesi_terjadwal: jad.n };
+}
+
+/** Ringkasan data terkait sebelum menghapus siswa (untuk dialog konfirmasi). */
+export async function studentDeleteSummary(actor: Actor | null, id: string): Promise<StudentDeleteSummary> {
+  assertCan(actor, "siswa", "write");
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new UserError("Siswa tidak ditemukan");
+  const s = await deleteSummary(db(), id);
+  if (!s) throw new UserError("Siswa tidak ditemukan");
+  return s;
+}
+
+/**
+ * Bebaskan tagihan: sesi Hadir siswa yang belum ditagih ditandai "dibebaskan" (tidak akan ditagihkan, mis. siswa berhenti).
+ * Sesi tidak dihapus, jadi honor tentor untuk sesi itu tetap dihitung. Tercatat di audit log. Butuh akses Kelola Invoice.
+ */
+export async function waiveStudentBilling(actor: Actor | null, studentId: string) {
+  assertCan(actor, "invoice", "write");
+  if (!/^[0-9a-f-]{36}$/i.test(studentId)) throw new UserError("Siswa tidak ditemukan");
+  return db().transaction(async (tx) => {
+    const [st] = await tx.select({ nama: students.nama }).from(students).where(and(eq(students.id, studentId), isNull(students.deletedAt)));
+    if (!st) throw new UserError("Siswa tidak ditemukan");
+    const moved = await tx
+      .update(sessions)
+      .set({ statusTagihan: "dibebaskan", updatedAt: new Date(), updatedBy: actor.id })
+      .where(and(eq(sessions.studentId, studentId), eq(sessions.statusKehadiran, "hadir"), eq(sessions.statusTagihan, "belum_rekap"), isNull(sessions.invoiceId)))
+      .returning({ id: sessions.id });
+    if (!moved.length) throw new UserError("Tidak ada sesi yang perlu dibebaskan");
+    await tx.insert(auditLog).values({ actorId: actor.id, aksi: "bebaskan_tagihan", target: studentId, detail: { siswa: st.nama, sesi: moved.length } });
+    return `${moved.length} sesi dibebaskan dari tagihan (honor tentor tetap dihitung).`;
+  });
+}
+
+/**
+ * Hapus siswa (soft delete). Ditolak bila masih ada tagihan terbuka (sesi Hadir belum ditagih atau invoice belum lunas):
+ * selesaikan dulu (terbitkan/lunasi, hapus invoice, atau bebaskan tagihan). Sesi yang masih terjadwal dibatalkan otomatis.
+ * Invoice lunas, honor, dan riwayat sesi Hadir tetap sebagai arsip.
+ */
 export async function softDeleteStudent(actor: Actor | null, id: string) {
   assertCan(actor, "siswa", "write");
-  const r = await db()
-    .update(students)
-    .set({ deletedAt: new Date(), deletedBy: actor.id, status: "nonaktif", updatedAt: new Date(), updatedBy: actor.id })
-    .where(and(eq(students.id, id), isNull(students.deletedAt)))
-    .returning({ id: students.id });
-  if (!r.length) throw new UserError("Siswa tidak ditemukan");
-  await db().insert(auditLog).values({ actorId: actor.id, aksi: "hapus_siswa", target: id });
-  return "Siswa dihapus (soft delete)";
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new UserError("Siswa tidak ditemukan");
+  return db().transaction(async (tx) => {
+    await tx.select({ id: students.id }).from(students).where(eq(students.id, id)).for("update");
+    const sum = await deleteSummary(tx, id);
+    if (!sum) throw new UserError("Siswa tidak ditemukan");
+    if (sum.hadir_belum_ditagih > 0 || sum.invoice_belum_lunas > 0) {
+      const bagian = [
+        sum.hadir_belum_ditagih > 0 ? `${sum.hadir_belum_ditagih} sesi Hadir belum ditagih` : "",
+        sum.invoice_belum_lunas > 0 ? `${sum.invoice_belum_lunas} invoice belum lunas` : "",
+      ].filter(Boolean);
+      throw new UserError(`${sum.nama} masih punya ${bagian.join(" dan ")}. Selesaikan atau bebaskan tagihannya dulu.`);
+    }
+    await tx
+      .update(students)
+      .set({ deletedAt: new Date(), deletedBy: actor.id, status: "nonaktif", updatedAt: new Date(), updatedBy: actor.id })
+      .where(eq(students.id, id));
+    const batal = await tx
+      .update(sessions)
+      .set({ statusKehadiran: "batal", catatanAdmin: AUTO_BATAL, updatedAt: new Date(), updatedBy: actor.id })
+      .where(and(eq(sessions.studentId, id), eq(sessions.statusKehadiran, "terjadwal")))
+      .returning({ id: sessions.id });
+    await tx.insert(auditLog).values({ actorId: actor.id, aksi: "hapus_siswa", target: id, detail: { siswa: sum.nama, sesi_dibatalkan: batal.length } });
+    return batal.length ? `Siswa dihapus. ${batal.length} sesi terjadwal dibatalkan.` : "Siswa dihapus (soft delete)";
+  });
+}
+
+const AUTO_BATAL = "Dibatalkan otomatis: siswa dihapus";
+
+export type DeletedStudentRow = {
+  id: string;
+  nama: string;
+  kelas: string | null;
+  programs: string[];
+  deleted_at: string;
+  deleted_by: string | null;
+  sesi_hadir: number;
+  sesi_dibebaskan: number;
+  sesi_batal_otomatis: number;
+  invoice_lunas: number;
+  invoice_belum_lunas: number;
+};
+
+/** Daftar siswa yang dihapus (soft delete) beserta ringkasan data terkait. Hanya Super Admin. */
+export async function listDeletedStudents(actor: Actor | null): Promise<DeletedStudentRow[]> {
+  assertSuperuser(actor);
+  const deleter = alias(users, "deleter_user");
+  const rows = await db()
+    .select({ s: students, oleh: deleter.nama })
+    .from(students)
+    .leftJoin(deleter, eq(deleter.id, students.deletedBy))
+    .where(isNotNull(students.deletedAt))
+    .orderBy(desc(students.deletedAt));
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.s.id);
+  const progRows = await db()
+    .select({ sid: studentPrograms.studentId, nama: programs.nama })
+    .from(studentPrograms)
+    .innerJoin(programs, eq(programs.id, studentPrograms.programId))
+    .where(inArray(studentPrograms.studentId, ids));
+  const sesRows = await db()
+    .select({ sid: sessions.studentId, k: sessions.statusKehadiran, t: sessions.statusTagihan, cat: sessions.catatanAdmin, n: count() })
+    .from(sessions)
+    .where(inArray(sessions.studentId, ids))
+    .groupBy(sessions.studentId, sessions.statusKehadiran, sessions.statusTagihan, sessions.catatanAdmin);
+  const invRows = await db()
+    .select({ sid: invoices.studentId, st: invoices.statusBayar, n: count() })
+    .from(invoices)
+    .where(inArray(invoices.studentId, ids))
+    .groupBy(invoices.studentId, invoices.statusBayar);
+  return rows.map(({ s, oleh }) => {
+    const mine = sesRows.filter((x) => x.sid === s.id);
+    const sum = (f: (x: (typeof mine)[number]) => boolean) => mine.filter(f).reduce((a, x) => a + x.n, 0);
+    const inv = invRows.filter((x) => x.sid === s.id);
+    return {
+      id: s.id,
+      nama: s.nama,
+      kelas: s.kelas,
+      programs: [...new Set(progRows.filter((p) => p.sid === s.id).map((p) => p.nama))],
+      deleted_at: s.deletedAt!.toISOString(),
+      deleted_by: oleh,
+      sesi_hadir: sum((x) => x.k === "hadir"),
+      sesi_dibebaskan: sum((x) => x.k === "hadir" && x.t === "dibebaskan"),
+      sesi_batal_otomatis: sum((x) => x.k === "batal" && x.cat === AUTO_BATAL),
+      invoice_lunas: inv.filter((x) => x.st === "lunas").reduce((a, x) => a + x.n, 0),
+      invoice_belum_lunas: inv.filter((x) => x.st === "belum_lunas").reduce((a, x) => a + x.n, 0),
+    };
+  });
+}
+
+/**
+ * Pulihkan siswa yang dihapus (Super Admin): aktif kembali di Data Siswa. Sesi yang dibatalkan otomatis saat penghapusan
+ * dan jamnya belum lewat dikembalikan ke terjadwal; yang jamnya sudah lewat tetap batal. Data lain tidak berubah.
+ */
+export async function restoreStudent(actor: Actor | null, id: string) {
+  assertSuperuser(actor);
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new UserError("Siswa tidak ditemukan");
+  return db().transaction(async (tx) => {
+    const [st] = await tx.select({ nama: students.nama }).from(students).where(and(eq(students.id, id), isNotNull(students.deletedAt))).for("update");
+    if (!st) throw new UserError("Siswa tidak ditemukan di data terhapus");
+    await tx
+      .update(students)
+      .set({ deletedAt: null, deletedBy: null, status: "aktif", updatedAt: new Date(), updatedBy: actor.id })
+      .where(eq(students.id, id));
+    const back = await tx
+      .update(sessions)
+      .set({ statusKehadiran: "terjadwal", catatanAdmin: null, updatedAt: new Date(), updatedBy: actor.id })
+      .where(and(eq(sessions.studentId, id), eq(sessions.statusKehadiran, "batal"), eq(sessions.catatanAdmin, AUTO_BATAL), gt(sessions.mulaiAt, new Date())))
+      .returning({ id: sessions.id });
+    await tx.insert(auditLog).values({ actorId: actor.id, aksi: "pulihkan_siswa", target: id, detail: { siswa: st.nama, sesi_dipulihkan: back.length } });
+    return back.length ? `${st.nama} dipulihkan. ${back.length} sesi terjadwal dikembalikan.` : `${st.nama} dipulihkan.`;
+  });
 }
 
 /**

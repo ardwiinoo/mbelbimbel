@@ -226,6 +226,8 @@ async function main() {
       invs[0].dibayar_oleh === "00000000-0000-0000-0000-0000000000a2" && invs[0].dibayar_pada !== null && invs[1].dibayar_oleh === null && invs[1].dibayar_pada === null, JSON.stringify(invs));
     const hsCols = await colsOf(cb, "honor_slips");
     check("upgrade: kolom pelacak honor (dibayar_oleh/pada, tunjangan_oleh/pada) ada", ["dibayar_oleh", "dibayar_pada", "tunjangan_oleh", "tunjangan_pada"].every((x) => hsCols.includes(x)));
+    const stv = (await cb.query("select unnest(enum_range(null::status_tagihan))::text as v")).rows.map((r) => r.v as string);
+    check("upgrade: status tagihan 'dibebaskan' tersedia, nilai lama utuh", stv.join() === "belum_rekap,terekap,dibebaskan", stv.join());
     check("upgrade: sesi lama tidak terkunci honor (honor_slip_id kosong)", (await cb.query("select count(*)::int n from sessions where honor_slip_id is not null")).rows[0].n === 0);
     const nb = (await cb.query("select (select count(*)::int from users where tarif_honor <> 0) a, (select count(*)::int from students where panggilan is not null) b, (select count(*)::int from app_settings where absen_susulan_bebas) c")).rows[0];
     check("upgrade: tarif honor tentor lama = 0, panggilan siswa lama kosong, absen susulan mati (perilaku lama)", nb.a === 0 && nb.b === 0 && nb.c === 0, JSON.stringify(nb));

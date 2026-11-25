@@ -26,7 +26,7 @@ export const permissionLevel = pgEnum("permission_level", ["read", "write"]);
 export const activeStatus = pgEnum("active_status", ["aktif", "nonaktif"]);
 export const programKategori = pgEnum("program_kategori", ["privat", "kelompok", "abk"]);
 export const statusKehadiran = pgEnum("status_kehadiran", ["terjadwal", "hadir", "tidak_hadir", "batal"]);
-export const statusTagihan = pgEnum("status_tagihan", ["belum_rekap", "terekap"]);
+export const statusTagihan = pgEnum("status_tagihan", ["belum_rekap", "terekap", "dibebaskan"]);
 export const statusBayar = pgEnum("status_bayar", ["belum_lunas", "lunas"]);
 export const fileKind = pgEnum("file_kind", ["assessment", "attendance", "report", "material", "signature", "logo"]);
 

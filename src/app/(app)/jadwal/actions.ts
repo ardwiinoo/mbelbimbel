@@ -2,6 +2,18 @@
 import { revalidatePath } from "next/cache";
 import { currentActor, runAction, toUserMessage } from "@/lib/action";
 import * as svc from "@/server/services/sessions";
+import { undoWaiveSession as undoWaiveSvc } from "@/server/services/invoices";
+
+/** Super Admin: batalkan pembebasan tagihan sebuah sesi. */
+export async function undoWaiveSession(id: string) {
+  const r = await runAction((actor) => undoWaiveSvc(actor, id));
+  if (r.ok) {
+    revalidatePath("/jadwal");
+    revalidatePath("/invoice");
+    revalidatePath("/");
+  }
+  return r;
+}
 
 export async function createSessions(input: Parameters<typeof svc.createSessions>[1]) {
   const r = await runAction((actor) => svc.createSessions(actor, input));

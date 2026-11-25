@@ -50,7 +50,7 @@ export function ScheduleView({
   /** Waktu server saat render: nilai awal jam supaya HTML server & klien identik (tanpa hydration mismatch). */
   serverNow: number;
   /** viewAll = akses Jadwal (Lihat) → semua tentor; selain itu (tentor) hanya jadwalnya sendiri. manage = akses Jadwal (Kelola). */
-  perm: { viewAll: boolean; manage: boolean };
+  perm: { viewAll: boolean; manage: boolean; superuser?: boolean };
   me: { id: string; nama: string };
   sessions: SessionRow[];
   /** Rentang & mode Resource Timeline. */
@@ -166,6 +166,7 @@ export function ScheduleView({
           tutor={tutors.find((t) => t.id === detail.tutor_id)}
           now={now}
           canManage={perm.manage}
+          isSuperuser={!!perm.superuser}
           conflicts={(conflictMap.get(detail.id) ?? []).flatMap((c) => {
             const other = sessionById.get(c.other.id);
             return other ? [{ session: other, kinds: c.kinds }] : [];

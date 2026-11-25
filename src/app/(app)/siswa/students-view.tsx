@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState, useTransition, useRef } from "react";
+import { useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, MessageCircle, Upload, Lock, Eye, Download } from "lucide-react";
@@ -12,14 +12,14 @@ import { umur, waLink, KATEGORI_LABEL, tanggal, siswaLabel } from "@/lib/format"
 import { postForm } from "@/lib/post-form";
 import type { StudentRow } from "@/server/services/students";
 import { StudentDialog } from "./student-dialog";
-import { softDeleteStudent } from "./actions";
+import { DeleteStudentDialog } from "./delete-dialog";
 import { AppSelect } from "@/components/app/app-select";
 import { confirmDialog } from "@/components/app/confirm";
 
 export type { StudentRow };
 
 /** Izin halaman Siswa untuk akun yang login (dihitung di server). */
-export type StudentPerm = { viewAll: boolean; manage: boolean; asesmen: "read" | "write" | null };
+export type StudentPerm = { viewAll: boolean; manage: boolean; asesmen: "read" | "write" | null; /** boleh membebaskan tagihan (akses Kelola Invoice) */ waive?: boolean };
 
 type Opt = { id: string; nama: string };
 
@@ -108,7 +108,7 @@ export function StudentsView({
                   {perm.viewAll && <Td><ParentCell s={s} /></Td>}
                   {perm.asesmen && <Td><AssessmentCell s={s} canUpload={perm.asesmen === "write"} /></Td>}
                   <Td>{statusPill(s)}</Td>
-                  {perm.manage && <Td><RowActions s={s} onEdit={() => setEditing(s)} /></Td>}
+                  {perm.manage && <Td><RowActions s={s} onEdit={() => setEditing(s)} canWaive={!!perm.waive} /></Td>}
                 </tr>
               ))}
             </DataTable>
@@ -138,7 +138,7 @@ export function StudentsView({
                 </dl>
                 {perm.manage && (
                   <div className="flex justify-end border-t bg-muted/30 px-4 py-2.5">
-                    <RowActions s={s} onEdit={() => setEditing(s)} />
+                    <RowActions s={s} onEdit={() => setEditing(s)} canWaive={!!perm.waive} />
                   </div>
                 )}
               </div>
@@ -300,28 +300,17 @@ function AssessmentCell({ s, canUpload }: { s: StudentRow; canUpload: boolean })
   );
 }
 
-function RowActions({ s, onEdit }: { s: StudentRow; onEdit: () => void }) {
-  const [pending, start] = useTransition();
-  function remove() {
-    start(async () => {
-      const ok = await confirmDialog({
-        title: `Hapus ${s.nama}?`,
-        desc: "Siswa hilang dari daftar, tetapi datanya tetap tersimpan dan bisa dipulihkan oleh Super Admin.",
-        confirmLabel: "Hapus",
-        tone: "danger",
-      });
-      if (!ok) return;
-      const r = await softDeleteStudent(s.id);
-      if (r.ok) toast.success(r.message);
-      else toast.error(r.error);
-    });
-  }
+function RowActions({ s, onEdit, canWaive }: { s: StudentRow; onEdit: () => void; canWaive: boolean }) {
+  const [deleting, setDeleting] = useState(false);
   return (
-    <ActionMenu
-      items={[
-        { label: "Edit siswa", icon: <Pencil />, onClick: onEdit },
-        { label: "Hapus siswa", icon: <Trash2 />, danger: true, separator: true, disabled: pending, onClick: remove },
-      ]}
-    />
+    <>
+      <ActionMenu
+        items={[
+          { label: "Edit siswa", icon: <Pencil />, onClick: onEdit },
+          { label: "Hapus siswa", icon: <Trash2 />, danger: true, separator: true, onClick: () => setDeleting(true) },
+        ]}
+      />
+      {deleting && <DeleteStudentDialog student={{ id: s.id, nama: s.nama }} canWaive={canWaive} onClose={() => setDeleting(false)} />}
+    </>
   );
 }
