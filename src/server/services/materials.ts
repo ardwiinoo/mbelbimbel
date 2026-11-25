@@ -90,14 +90,25 @@ export async function saveMaterial(actor: Actor | null, input: z.input<typeof me
   return hasFile && id ? "Materi disimpan (file lama dihapus)" : "Materi disimpan";
 }
 
-export async function softDeleteMaterial(actor: Actor | null, id: string) {
+/**
+ * Hapus materi: baris dan file fisiknya dihapus permanen (tidak menyisakan file di server).
+ * Jejak "siapa menghapus" tersimpan di audit log.
+ */
+export async function deleteMaterial(actor: Actor | null, id: string) {
   assertCan(actor, "materi", "write");
-  const r = await db()
-    .update(materials)
-    .set({ deletedAt: new Date(), deletedBy: actor.id })
-    .where(and(eq(materials.id, id), isNull(materials.deletedAt)))
-    .returning({ id: materials.id });
-  if (!r.length) throw new UserError("Materi tidak ditemukan");
-  await db().insert(auditLog).values({ actorId: actor.id, aksi: "hapus_materi", target: id });
-  return "Materi dihapus (soft delete)";
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new UserError("Materi tidak ditemukan");
+  const key = await db().transaction(async (tx) => {
+    const [m] = await tx
+      .select({ fileId: materials.fileId, judul: materials.judul })
+      .from(materials)
+      .where(and(eq(materials.id, id), isNull(materials.deletedAt)))
+      .for("update");
+    if (!m) throw new UserError("Materi tidak ditemukan");
+    await tx.delete(materials).where(eq(materials.id, id));
+    const k = await detachFileRow(tx, m.fileId);
+    await tx.insert(auditLog).values({ actorId: actor.id, aksi: "hapus_materi", target: id, detail: { judul: m.judul } });
+    return k;
+  });
+  await purgeStoredFiles([key]);
+  return "Materi dihapus beserta filenya.";
 }

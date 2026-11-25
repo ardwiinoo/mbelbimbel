@@ -13,11 +13,14 @@ const mapelKey = z.string().regex(/^[a-z0-9_]{2,30}$/, "Kategori mapel tidak val
 // ---------- opsi dropdown (admin) ----------
 export async function programOptions(actor: Actor) {
   assertAny(actor, [["siswa", "read"], ["jadwal", "read"], ["tentor", "read"]]); // nama program/tentor untuk filter & form
-  return db()
-    .select({ id: programs.id, nama: programs.nama, kategori: programs.kategori })
+  const rows = await db()
+    .select({ id: programs.id, nama: programs.nama, kategori: programs.kategori, tarif: programs.tarifPerPertemuan })
     .from(programs)
     .where(eq(programs.aktif, true))
     .orderBy(asc(programs.nama));
+  // Tarif hanya dikirim ke akun yang boleh melihat Invoice (akun Siswa/Jadwal saja tidak perlu tahu nominal)
+  const seeTarif = can(actor, "invoice", "read");
+  return rows.map((p) => ({ id: p.id, nama: p.nama, kategori: p.kategori, tarif: seeTarif ? p.tarif : null }));
 }
 
 export async function tutorOptions(actor: Actor) {

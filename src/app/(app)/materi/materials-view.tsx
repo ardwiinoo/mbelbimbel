@@ -2,18 +2,19 @@
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, MessageCircle, FileText, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, MessageCircle, FileText, Loader2, Eye, Download } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataTable, Td, EmptyState } from "@/components/app/ui";
 import { FilterRow, filterSelectClass, Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
-import { FileLinks } from "@/components/app/file-link";
+import { fileHref } from "@/components/app/file-link";
+import { ActionMenu, type ActionItem } from "@/components/app/action-menu";
 import { FormDialog, Field } from "@/components/app/form-dialog";
 import { postForm } from "@/lib/post-form";
 import type { MaterialRow } from "@/server/services/materials";
 import { tanggal, waLink } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { softDeleteMaterial } from "./actions";
+import { deleteMaterial } from "./actions";
 import { AppSelect } from "@/components/app/app-select";
 import { confirmDialog } from "@/components/app/confirm";
 
@@ -40,6 +41,28 @@ export function MaterialsView({ canManage, tutorName, waAdmin, materials }: {
   const byFilter = useMemo(() => materials.filter((m) => (!kat || m.kategori === kat) && (!jen || m.jenjang === jen)), [materials, kat, jen]);
   const list = useClientList(byFilter, materialSearchText);
   const rows = list.rows;
+
+  function remove(m: MaterialRow) {
+    start(async () => {
+      const ok = await confirmDialog({
+        title: `Hapus materi "${m.judul}"?`,
+        desc: "Materi dan file-nya dihapus permanen dari server. Tindakan ini tidak bisa dibatalkan.",
+        confirmLabel: "Hapus",
+        tone: "danger",
+      });
+      if (!ok) return;
+      const r = await deleteMaterial(m.id);
+      if (r.ok) toast.success(r.message);
+      else toast.error(r.error);
+    });
+  }
+
+  const menuItems = (m: MaterialRow): ActionItem[] => [
+    { label: "Lihat file", icon: <Eye />, href: fileHref(m.file_id), newTab: true, hidden: !previewable(m.mime) },
+    { label: "Unduh", icon: <Download />, href: fileHref(m.file_id, true) },
+    { label: "Edit", icon: <Pencil />, hidden: !isAdmin, separator: true, onClick: () => setEditing(m) },
+    { label: "Hapus materi", icon: <Trash2 />, danger: true, hidden: !isAdmin, disabled: pending, onClick: () => remove(m) },
+  ];
 
   const usulanText = `Halo Admin, saya ${tutorName} ingin mengusulkan materi untuk Bank Materi:\n\nJudul: \nKategori/Jenjang: \n\n(file saya lampirkan di chat ini)`;
 
@@ -73,7 +96,7 @@ export function MaterialsView({ canManage, tutorName, waAdmin, materials }: {
       ) : (
         <>
           <div className="hidden md:block">
-            <DataTable head={["Judul Modul / Materi", "Kategori / Jenjang", "Tgl Update", "File Materi", ...(isAdmin ? [""] : [])]}>
+            <DataTable head={["Judul Modul / Materi", "Kategori / Jenjang", "Tgl Update", "Aksi"]}>
               {rows.map((m) => (
                 <tr key={m.id}>
                   <Td>
@@ -85,19 +108,7 @@ export function MaterialsView({ canManage, tutorName, waAdmin, materials }: {
                     <p>{tanggal(m.updated_at, false)}</p>
                     {m.updated_by && <p className="text-xs text-muted-foreground">oleh {m.updated_by}</p>}
                   </Td>
-                  <Td><FileLinks fileId={m.file_id} view={previewable(m.mime)} /></Td>
-                  {isAdmin && (
-                    <Td>
-                      <div className="flex gap-1">
-                        <Button size="icon-sm" variant="ghost" aria-label="Edit" onClick={() => setEditing(m)}><Pencil /></Button>
-                        <Button size="icon-sm" variant="ghost" aria-label="Hapus" disabled={pending} onClick={async () => {
-                          const ok = await confirmDialog({ title: `Hapus materi "${m.judul}"?`, desc: "Materi tidak lagi tampil di Bank Materi.", confirmLabel: "Hapus", tone: "danger" });
-                          if (!ok) return;
-                          start(async () => { const r = await softDeleteMaterial(m.id); if (r.ok) toast.success(r.message); else toast.error(r.error); });
-                        }}><Trash2 className="text-destructive" /></Button>
-                      </div>
-                    </Td>
-                  )}
+                  <Td><ActionMenu items={menuItems(m)} /></Td>
                 </tr>
               ))}
             </DataTable>
@@ -112,9 +123,8 @@ export function MaterialsView({ canManage, tutorName, waAdmin, materials }: {
                     <p className="text-xs text-muted-foreground">{m.kategori} • {m.jenjang} • {tanggal(m.updated_at, false)}{m.updated_by && ` oleh ${m.updated_by}`}</p>
                   </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <FileLinks fileId={m.file_id} view={previewable(m.mime)} />
-                  {isAdmin && <Button size="sm" variant="ghost" onClick={() => setEditing(m)}><Pencil /></Button>}
+                <div className="flex justify-end">
+                  <ActionMenu items={menuItems(m)} />
                 </div>
               </div>
             ))}

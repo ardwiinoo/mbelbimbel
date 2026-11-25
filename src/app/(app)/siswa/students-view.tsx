@@ -2,11 +2,12 @@
 import { useMemo, useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, MessageCircle, Upload, Lock } from "lucide-react";
+import { Plus, Pencil, Trash2, MessageCircle, Upload, Lock, Eye, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Pill, EmptyState } from "@/components/app/ui";
 import { FilterRow, filterSelectClass, Pager, SearchBox, Toolbar, useClientList } from "@/components/app/table-kit";
-import { FileLinks } from "@/components/app/file-link";
+import { fileHref } from "@/components/app/file-link";
+import { ActionMenu } from "@/components/app/action-menu";
 import { umur, waLink, KATEGORI_LABEL, tanggal, siswaLabel } from "@/lib/format";
 import { postForm } from "@/lib/post-form";
 import type { StudentRow } from "@/server/services/students";
@@ -33,7 +34,7 @@ export function StudentsView({
 }: {
   perm: StudentPerm;
   students: StudentRow[];
-  programs: (Opt & { kategori: string })[];
+  programs: (Opt & { kategori: string; tarif: number | null })[];
   tutors: Opt[];
 }) {
   const [fProgram, setFProgram] = useState("");
@@ -96,7 +97,7 @@ export function StudentsView({
                 ...(perm.viewAll ? ["Orang Tua & WA"] : []),
                 ...(perm.asesmen ? ["Dokumen Asesmen"] : []),
                 "Status",
-                ...(perm.manage ? [""] : []),
+                ...(perm.manage ? ["Aksi"] : []),
               ]}
             >
               {rows.map((s) => (
@@ -264,66 +265,63 @@ function AssessmentCell({ s, canUpload }: { s: StudentRow; canUpload: boolean })
   }
 
   return (
-    <div className="space-y-1.5">
-      {latest ? (
-        <>
-          <Pill color="blue">
-            <Lock className="size-3" /> Ada ({latest.file_name?.split(".").pop()?.toUpperCase()})
-          </Pill>
-          <p className="text-[11px] text-muted-foreground">{tanggal(latest.uploaded_at, false)}</p>
-          <FileLinks fileId={latest.file_id} />
-        </>
-      ) : (
-        <Pill color="amber">Belum ada</Pill>
-      )}
+    <div className="flex items-start gap-2">
+      <div className="space-y-0.5">
+        {latest ? (
+          <>
+            <Pill color="blue">
+              <Lock className="size-3" /> Ada ({latest.file_name?.split(".").pop()?.toUpperCase()})
+            </Pill>
+            <p className="text-[11px] text-muted-foreground">{tanggal(latest.uploaded_at, false)}</p>
+          </>
+        ) : (
+          <Pill color="amber">Belum ada</Pill>
+        )}
+      </div>
       {canUpload && (
-        <>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="application/pdf,image/jpeg,image/png"
-            hidden
-            onChange={(e) => onFile(e.target.files?.[0])}
-          />
-          <Button size="sm" variant={latest ? "ghost" : "outline"} disabled={busy} onClick={() => inputRef.current?.click()}>
-            <Upload /> {busy ? "Mengunggah..." : latest ? "Ganti file" : "Upload asesmen"}
-          </Button>
-          {latest && <p className="text-[11px] text-muted-foreground">Mengganti file akan menghapus file lama.</p>}
-        </>
+        <input ref={inputRef} type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(e) => onFile(e.target.files?.[0])} />
       )}
+      <ActionMenu
+        label="Aksi dokumen asesmen"
+        items={[
+          { label: "Lihat dokumen", icon: <Eye />, href: latest ? fileHref(latest.file_id) : undefined, newTab: true, hidden: !latest },
+          { label: "Unduh", icon: <Download />, href: latest ? fileHref(latest.file_id, true) : undefined, hidden: !latest },
+          {
+            label: latest ? "Ganti file" : "Upload asesmen",
+            icon: <Upload />,
+            hidden: !canUpload,
+            disabled: busy,
+            separator: !!latest,
+            onClick: () => inputRef.current?.click(),
+          },
+        ]}
+      />
     </div>
   );
 }
 
 function RowActions({ s, onEdit }: { s: StudentRow; onEdit: () => void }) {
   const [pending, start] = useTransition();
+  function remove() {
+    start(async () => {
+      const ok = await confirmDialog({
+        title: `Hapus ${s.nama}?`,
+        desc: "Siswa hilang dari daftar, tetapi datanya tetap tersimpan dan bisa dipulihkan oleh Super Admin.",
+        confirmLabel: "Hapus",
+        tone: "danger",
+      });
+      if (!ok) return;
+      const r = await softDeleteStudent(s.id);
+      if (r.ok) toast.success(r.message);
+      else toast.error(r.error);
+    });
+  }
   return (
-    <div className="flex gap-1">
-      <Button size="sm" variant="outline" onClick={onEdit}>
-        <Pencil /> Edit
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        disabled={pending}
-        aria-label="Hapus"
-        onClick={async () => {
-          const ok = await confirmDialog({
-            title: `Hapus ${s.nama}?`,
-            desc: "Siswa hilang dari daftar, tetapi datanya tetap tersimpan dan bisa dipulihkan oleh Super Admin.",
-            confirmLabel: "Hapus",
-            tone: "danger",
-          });
-          if (!ok) return;
-          start(async () => {
-            const r = await softDeleteStudent(s.id);
-            if (r.ok) toast.success(r.message);
-            else toast.error(r.error);
-          });
-        }}
-      >
-        <Trash2 className="text-destructive" />
-      </Button>
-    </div>
+    <ActionMenu
+      items={[
+        { label: "Edit siswa", icon: <Pencil />, onClick: onEdit },
+        { label: "Hapus siswa", icon: <Trash2 />, danger: true, separator: true, disabled: pending, onClick: remove },
+      ]}
+    />
   );
 }

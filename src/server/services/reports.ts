@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, ilike, isNull, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
-import { files, programs, progressReports, studentPrograms, students, users } from "@/db/schema";
+import { auditLog, files, programs, progressReports, studentPrograms, students, users } from "@/db/schema";
 import { can } from "@/lib/access";
 import { assertActive, assertTutor, scopeOf, UserError, type Actor } from "../authz";
 import { detachFileRow, purgeStoredFiles, withUploadedFile } from "../files";
@@ -213,4 +213,31 @@ export async function updateReport(
     await db().update(progressReports).set(patch).where(eq(progressReports.id, rep.id));
   }
   return hasFile ? "Laporan diperbarui (file diganti)" : "Laporan diperbarui";
+}
+
+/**
+ * Hapus laporan (mis. salah unggah): baris dan file PDF-nya dihapus permanen dari server.
+ * Aturan akses sama dengan edit: akses Laporan (Kelola), atau tentor pengunggahnya. Tercatat di audit log.
+ */
+export async function deleteReport(actor: Actor | null, reportId: string) {
+  assertActive(actor);
+  if (!/^[0-9a-f-]{36}$/i.test(reportId)) throw new UserError("Laporan tidak ditemukan");
+  const key = await db().transaction(async (tx) => {
+    const [rep] = await tx
+      .select({ id: progressReports.id, tutorId: progressReports.tutorId, fileId: progressReports.fileId, periode: progressReports.periode, siswa: students.nama })
+      .from(progressReports)
+      .innerJoin(students, eq(students.id, progressReports.studentId))
+      .where(and(eq(progressReports.id, reportId), isNull(progressReports.deletedAt)))
+      .for("update", { of: progressReports });
+    // 404 yang sama untuk "tidak ada" maupun "bukan milik Anda"
+    if (!rep || (!can(actor, "laporan", "write") && !(actor.isTutor && rep.tutorId === actor.id))) {
+      throw new UserError("Laporan tidak ditemukan");
+    }
+    await tx.delete(progressReports).where(eq(progressReports.id, rep.id));
+    const k = await detachFileRow(tx, rep.fileId);
+    await tx.insert(auditLog).values({ actorId: actor.id, aksi: "hapus_laporan", target: rep.id, detail: { siswa: rep.siswa, periode: rep.periode } });
+    return k;
+  });
+  await purgeStoredFiles([key]);
+  return "Laporan dihapus beserta filenya.";
 }
