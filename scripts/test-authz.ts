@@ -661,6 +661,31 @@ async function main() {
     await rejects("invoice: tentor tidak bisa membaca riwayat", () => inv.invoiceHistory(aulia, terbit.id), /tidak punya akses/);
     check("invoice: id riwayat tidak valid → kosong", (await inv.invoiceHistory(admin, "bukan-uuid")).length === 0);
 
+    const magang = await actor("magang@bimbel.test");
+    // --- invoice: hapus (salah terbit) → sesi kembali Siap Tagih, bisa terbit ulang ---
+    await ses.createSessions(admin, { student_program_id: spAulia.id, tutor_id: aulia.id, tanggal: "2019-05-13", jam_mulai: "09:00", jam_selesai: "10:00", ulang_minggu: 1 });
+    const [sHapus] = await db().select().from(sessions).where(and(eq(sessions.tutorId, aulia.id), eq(sessions.mulaiAt, new Date("2019-05-13T09:00:00+07:00"))));
+    await ses.setAttendanceStatus(admin, sHapus.id, "hadir", "uji hapus invoice");
+    const salah = await inv.issueInvoice(admin, sHapus.studentId, sHapus.programId, [sHapus.id]);
+    const [salahRow] = await db().select().from(invoices).where(eq(invoices.id, salah.id));
+    await rejects("hapus invoice: tentor ditolak", () => inv.deleteInvoice(aulia, salah.id), /tidak punya akses/);
+    await rejects("hapus invoice: akses Lihat ditolak", () => inv.deleteInvoice(magang, salah.id), /tidak punya akses/);
+    await inv.setPaid(admin, salah.id, true, "2026-01-05");
+    await rejects("hapus invoice: yang sudah lunas ditolak (batalkan lunas dulu)", () => inv.deleteInvoice(admin, salah.id), /sudah lunas/);
+    await inv.setPaid(admin, salah.id, false);
+    await inv.deleteInvoice(bayu, salah.id);
+    check("hapus invoice: baris & rinciannya hilang", (await db().select().from(invoices).where(eq(invoices.id, salah.id))).length === 0);
+    const [sKembali] = await db().select().from(sessions).where(eq(sessions.id, sHapus.id));
+    check("hapus invoice: sesi kembali Belum Rekap & terlepas dari invoice", sKembali.statusTagihan === "belum_rekap" && sKembali.invoiceId === null);
+    const [audHapus] = await db().select().from(auditLog).where(and(eq(auditLog.target, salah.id), eq(auditLog.aksi, "invoice_hapus")));
+    check("hapus invoice: tercatat siapa yang menghapus + nomor", audHapus?.actorId === bayu.id && (audHapus.detail as { nomor?: string })?.nomor === salahRow.nomor);
+    const ulang = await inv.issueInvoice(admin, sHapus.studentId, sHapus.programId, [sHapus.id]);
+    const [ulangRow] = await db().select().from(invoices).where(eq(invoices.id, ulang.id));
+    check("hapus invoice: terbit ulang memakai nomor yang sama (tanpa lubang)", ulangRow.nomor === salahRow.nomor, `${ulangRow.nomor} vs ${salahRow.nomor}`);
+    await inv.deleteInvoice(admin, ulang.id);
+    await rejects("hapus invoice: id tidak ada", () => inv.deleteInvoice(admin, ulang.id), /tidak ditemukan/);
+    await db().delete(sessions).where(eq(sessions.id, sHapus.id)); // bersihkan sesi uji agar blok honor tak terpengaruh
+
     // --- honor: tarif, tunjangan, lunas oleh admin berbeda ---
     await master.saveTutor(admin, { ...tutorBase, tarif_honor: 36000 });
     const [audTarif] = await db().select().from(auditLog).where(eq(auditLog.aksi, "ubah_tarif_honor")).orderBy(sql`${auditLog.id} desc`).limit(1);

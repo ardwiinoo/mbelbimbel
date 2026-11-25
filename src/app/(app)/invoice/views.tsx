@@ -1,16 +1,18 @@
 "use client";
 import { Fragment, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { ChevronRight, FilePlus2, FileText, CheckCircle2, BadgeCheck, Undo2 } from "lucide-react";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { ChevronRight, FilePlus2, FileText, CheckCircle2, BadgeCheck, Undo2, Trash2, History, MessageCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { FormDialog, Field } from "@/components/app/form-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable, Td, Pill, EmptyState, SectionHeader } from "@/components/app/ui";
 import { SearchBox, ServerPager, ServerSearch, Toolbar, useQueryNav } from "@/components/app/table-kit";
-import { ShareWaButton } from "@/components/app/share-wa";
+import { shareFileViaWa } from "@/components/app/share-wa";
+import { ActionMenu } from "@/components/app/action-menu";
 import { rupiah, tanggal, jam, bulanWib, namaBulan } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { issueInvoice, loadInvoiceHistory, setPaid } from "./actions";
+import { confirmDialog } from "@/components/app/confirm";
+import { deleteInvoice, issueInvoice, loadInvoiceHistory, setPaid } from "./actions";
 import { HistoryPanel } from "@/components/app/history-panel";
 import { AppSelect } from "@/components/app/app-select";
 
@@ -228,6 +230,22 @@ export function InvoiceHistory({
   meNama: string;
 }) {
   const [paying, setPaying] = useState<InvoiceRow | null>(null);
+  const [removing, startRemove] = useTransition();
+
+  function remove(inv: InvoiceRow) {
+    startRemove(async () => {
+      const ok = await confirmDialog({
+        title: `Hapus invoice ${inv.nomor}?`,
+        desc: `Invoice ${inv.students?.nama ?? ""} (${rupiah(inv.total)}) dihapus dan sesinya kembali ke Daftar Siap Tagih, sehingga bisa diterbitkan ulang dengan tarif terbaru. Nota yang sudah dikirim ke orang tua tidak lagi berlaku.`,
+        confirmLabel: "Hapus invoice",
+        tone: "danger",
+      });
+      if (!ok) return;
+      const r = await deleteInvoice(inv.id);
+      if (r.ok) toast.success(r.message);
+      else toast.error(r.error);
+    });
+  }
   const { set, pending } = useQueryNav();
   const tabs = [
     { k: "", label: `Semua (${summary.all})` },
@@ -268,7 +286,7 @@ export function InvoiceHistory({
       {invoices.length === 0 ? (
         <EmptyState title="Tidak ada invoice" desc="Belum ada invoice, atau tidak cocok dengan pencarian/filter." />
       ) : (
-        <DataTable head={["No. Invoice", "Tgl Terbit", "Siswa & Kelas", "Rincian", "Total", "Status Bayar", "File Nota"]}>
+        <DataTable head={["No. Invoice", "Tgl Terbit", "Siswa & Kelas", "Rincian", "Total", "Status Bayar", "Aksi"]}>
           {invoices.map((inv) => (
             <tr key={inv.id}>
               <Td className="whitespace-nowrap">
@@ -285,34 +303,39 @@ export function InvoiceHistory({
                     <Pill color="green">Lunas</Pill>
                     {inv.tgl_bayar && <p className="text-[11px] text-muted-foreground">{tanggal(inv.tgl_bayar, false)}</p>}
                     <p className="text-[11px] text-muted-foreground">dicatat oleh {inv.dibayar_oleh ?? inv.updated_by ?? "–"}</p>
-                    {canWrite && (
-                      <button className="block text-[11px] text-muted-foreground underline hover:text-foreground" onClick={() => setPaying(inv)}>
-                        ubah / riwayat
-                      </button>
-                    )}
                   </div>
                 ) : (
-                  <div className="flex flex-col items-start gap-1.5">
-                    <Pill color="red">Belum Lunas</Pill>
-                    {canWrite && (
-                      <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setPaying(inv)}>
-                        <BadgeCheck /> Tandai Lunas
-                      </Button>
-                    )}
-                  </div>
+                  <Pill color="red">Belum Lunas</Pill>
                 )}
               </Td>
               <Td>
-                <div className="flex flex-wrap gap-1.5">
-                  <a href={pdfUrl(inv.id)} target="_blank" rel="noopener" className={buttonVariants({ variant: "outline", size: "sm" })}>
-                    <FileText /> Lihat PDF
-                  </a>
-                  <ShareWaButton
-                    fileUrl={pdfUrl(inv.id)}
-                    fileName={`${inv.nomor.replaceAll("/", "-")}.pdf`}
-                    phone={inv.students?.ortu_wa ?? null}
-                    text={`Assalamu'alaikum ${inv.students?.ortu_nama ?? "Bapak/Ibu"}, berikut nota tagihan les ${inv.students?.nama} (${inv.nomor}) sebesar ${rupiah(inv.total)}. Terima kasih.`}
-                    label="WA"
+                <div className="flex items-center gap-1.5">
+                  {canWrite && inv.status_bayar !== "lunas" && (
+                    <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => setPaying(inv)}>
+                      <BadgeCheck /> Tandai Lunas
+                    </Button>
+                  )}
+                  {canWrite && inv.status_bayar === "lunas" && (
+                    <Button size="sm" variant="outline" onClick={() => setPaying(inv)}>
+                      <History /> Ubah / Riwayat
+                    </Button>
+                  )}
+                  <ActionMenu
+                    items={[
+                      { label: "Lihat PDF", icon: <FileText />, href: pdfUrl(inv.id), newTab: true },
+                      {
+                        label: "Kirim WA",
+                        icon: <MessageCircle />,
+                        onClick: () =>
+                          void shareFileViaWa({
+                            fileUrl: pdfUrl(inv.id),
+                            fileName: `${inv.nomor.replaceAll("/", "-")}.pdf`,
+                            phone: inv.students?.ortu_wa ?? null,
+                            text: `Assalamu'alaikum ${inv.students?.ortu_nama ?? "Bapak/Ibu"}, berikut nota tagihan les ${inv.students?.nama} (${inv.nomor}) sebesar ${rupiah(inv.total)}. Terima kasih.`,
+                          }),
+                      },
+                      { label: "Hapus invoice", icon: <Trash2 />, danger: true, separator: true, hidden: !canWrite || inv.status_bayar === "lunas", disabled: removing, onClick: () => remove(inv) },
+                    ]}
                   />
                 </div>
               </Td>

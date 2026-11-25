@@ -15,6 +15,8 @@ export function auditLabel(aksi: string, d: Record<string, unknown> | null): str
       return `Menandai lunas${d?.tgl_bayar ? ` (dibayar ${str(d.tgl_bayar)})` : ""}`;
     case "invoice_batal_lunas":
       return "Membatalkan status lunas";
+    case "invoice_hapus":
+      return `Menghapus invoice ${str(d?.nomor)} (${num(d?.sesi)} sesi, ${rupiah(num(d?.total))}), sesi kembali ke Siap Tagih`;
     case "honor_tunjangan":
       return `Mengatur tunjangan ${rupiah(num(d?.tunjangan))}${d?.keterangan ? ` (${str(d.keterangan)})` : ""}`;
     case "honor_lunas":

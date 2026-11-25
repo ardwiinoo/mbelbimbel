@@ -32,8 +32,12 @@ export function ConfirmHost() {
 
   useEffect(() => {
     push = (r) => {
-      setReq(r);
-      setOpen(true);
+      // Ditunda ke luar lingkup pemanggil: bila confirmDialog() dipanggil di dalam startTransition(async …),
+      // setState di sini ikut "transisi" yang baru selesai setelah dialog dijawab → dialog tak pernah tampil (macet).
+      setTimeout(() => {
+        setReq(r);
+        setOpen(true);
+      }, 0);
     };
     return () => {
       push = null;

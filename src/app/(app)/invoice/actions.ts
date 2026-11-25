@@ -18,6 +18,16 @@ export async function setPaid(id: string, lunas: boolean, tglBayar?: string) {
   return r;
 }
 
+export async function deleteInvoice(id: string) {
+  const r = await runAction((actor) => svc.deleteInvoice(actor, id));
+  if (r.ok) {
+    revalidatePath("/invoice");
+    revalidatePath("/jadwal");
+    revalidatePath("/");
+  }
+  return r;
+}
+
 /** Riwayat pencatatan satu invoice (terbit, lunas, batal lunas): siapa, kapan, apa. */
 export async function loadInvoiceHistory(id: string) {
   try {

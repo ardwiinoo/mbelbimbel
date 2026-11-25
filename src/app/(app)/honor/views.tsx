@@ -2,8 +2,9 @@
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Send } from "lucide-react";
+import { BadgeCheck, Download, FileText, History, Receipt, Send, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ActionMenu } from "@/components/app/action-menu";
 import { Input } from "@/components/ui/input";
 import { DataTable, Td, EmptyState } from "@/components/app/ui";
 import { FormDialog, Field } from "@/components/app/form-dialog";
@@ -94,43 +95,28 @@ export function HonorView({ rows, periode, current, canWrite, canEditTutor, canI
     });
   }
 
-  const payButton = (r: HonorRow) => (
-    <Button
-      size="sm"
-      className="bg-green-600 text-white hover:bg-green-700"
-      disabled={r.sesi === 0 || r.tarif_kosong}
-      title={r.tarif_kosong ? "Isi tarif honor di menu Tentor & Tarif" : r.sesi === 0 ? "Belum ada sesi yang terekap" : undefined}
-      onClick={() => setPaying(r)}
-    >
-      Tandai Lunas
-    </Button>
-  );
-
-  const slipLink = (r: HonorRow) => (
-    <>
-      <a href={slipHref(r, periode, false)} target="_blank" rel="noopener" className="text-sm leading-tight font-medium text-blue-700 underline-offset-2 hover:underline">
-        Lihat Slip
-      </a>
-      <a href={slipHref(r, periode)} className="text-sm leading-tight font-medium text-blue-700 underline-offset-2 hover:underline">
-        Download Slip PDF
-      </a>
-    </>
-  );
-
   const actions = (r: HonorRow) => (
-    <div className="flex flex-col items-start gap-1.5">
-      {canWrite && !isLunas(r) && payButton(r)}
-      {slipLink(r)}
-      {canInvoice && r.sesi > 0 && (
-        <button type="button" onClick={() => setInspecting(r)} className="text-sm leading-tight font-medium text-blue-700 underline-offset-2 hover:underline">
-          Lihat Invoice
-        </button>
+    <div className="flex items-center gap-1.5">
+      {canWrite && !isLunas(r) && (
+        <Button
+          size="sm"
+          className="bg-green-600 text-white hover:bg-green-700"
+          disabled={r.sesi === 0 || r.tarif_kosong}
+          title={r.tarif_kosong ? "Isi tarif honor di menu Tentor & Tarif" : r.sesi === 0 ? "Belum ada sesi yang terekap" : undefined}
+          onClick={() => setPaying(r)}
+        >
+          <BadgeCheck /> Tandai Lunas
+        </Button>
       )}
-      {canWrite && isLunas(r) && (
-        <button type="button" disabled={pending} onClick={() => unpay(r)} className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
-          Batalkan lunas
-        </button>
-      )}
+      <ActionMenu
+        items={[
+          { label: "Lihat Slip", icon: <FileText />, href: slipHref(r, periode, false), newTab: true },
+          { label: "Unduh Slip PDF", icon: <Download />, href: slipHref(r, periode) },
+          { label: "Lihat Invoice", icon: <Receipt />, hidden: !canInvoice || r.sesi === 0, onClick: () => setInspecting(r) },
+          { label: "Riwayat", icon: <History />, hidden: !r.slip, onClick: () => setHistory(r) },
+          { label: "Batalkan Lunas", icon: <Undo2 />, danger: true, separator: true, hidden: !(canWrite && isLunas(r)), disabled: pending, onClick: () => unpay(r) },
+        ]}
+      />
     </div>
   );
 
@@ -139,12 +125,8 @@ export function HonorView({ rows, periode, current, canWrite, canEditTutor, canI
       <StatusBadge lunas={isLunas(r)} />
       {isLunas(r) && r.slip?.tgl_bayar && <p className="text-xs text-muted-foreground">{tanggal(`${r.slip.tgl_bayar}T12:00:00+07:00`, false)}</p>}
       {isLunas(r) && <p className="text-xs text-muted-foreground">dicatat oleh {r.dicatat?.oleh ?? "–"}</p>}
-      {r.slip && (
-        <button type="button" onClick={() => setHistory(r)} className="text-xs text-blue-700 underline-offset-2 hover:underline">
-          riwayat
-        </button>
-      )}
       {isLunas(r) && r.sesi_baru > 0 && <p className="text-xs font-medium text-amber-700">+{r.sesi_baru} sesi baru setelah dibayar</p>}
+      {!isLunas(r) && r.sesi === 0 && !r.tarif_kosong && <p className="text-xs text-muted-foreground">Belum ada sesi terekap bulan ini, belum bisa dilunasi.</p>}
       {r.tarif_kosong && (
         <p className="text-xs font-medium text-amber-700">
           Tarif belum diisi
@@ -216,7 +198,7 @@ export function HonorView({ rows, periode, current, canWrite, canEditTutor, canI
                   <Td className="min-w-36">{totalCell(r)}</Td>
                   <Td className="whitespace-nowrap text-muted-foreground">{maskRekening(r.rekening)}</Td>
                   <Td className="min-w-40">{statusCell(r)}</Td>
-                  <Td className="whitespace-nowrap">{actions(r)}</Td>
+                  <Td>{actions(r)}</Td>
                 </tr>
               ))}
             </DataTable>
